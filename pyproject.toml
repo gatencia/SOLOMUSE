@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solomuse-data"
+version = "0.1.0"
+description = "Data preparation pipeline for the Solomuse audio model."
+authors = [{name = "Solomuse Team"}]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "soundfile",
+    "pyloudnorm",
+    "pandas",
+    "pydantic>=2.0",
+    "tqdm",
+    "resampy",
+    "pyyaml"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8"
+]
+
+[project.scripts]
+solomuse-data = "solomuse_data.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["solomuse_data*"]

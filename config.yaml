@@ -1,0 +1,16 @@
+output_root: "./data/processed"
+
+dataset_roots:
+  slakh: "./data/raw/babyslakh_16k"
+  # musdb: "/path/to/musdb18" # Uncomment if you download MUSDB
+  # weak_songs: "/path/to/weak_mp3s"
+
+# Pipeline Settings
+canonical_sample_rate: 44100
+canonical_channels: 2
+segment_seconds: 6.0
+segment_hop_seconds: 3.0
+min_segment_energy: 0.0001
+
+enable_weak_demucs: false
+demucs_model: "htdemucs"

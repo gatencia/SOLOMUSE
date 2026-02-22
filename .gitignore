@@ -1,0 +1,52 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ---- Virtual envs ----
+venv/
+.venv/
+env/
+ENV/
+
+# ---- IDE/editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- macOS ----
+.DS_Store
+
+# ---- Data outputs (DO NOT COMMIT) ----
+data/
+outputs/
+output/
+processed/
+datasets/
+downloads/
+
+# If you write to a specific output_root path, ignore it explicitly:
+# /app/data/
+# /mnt/data/
+# output_root/
+
+# ---- Audio artifacts ----
+*.wav
+*.flac
+*.mp3
+
+# ---- Logs ----
+*.log
+logs/

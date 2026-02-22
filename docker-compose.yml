@@ -1,0 +1,24 @@
+services:
+  solomuse:
+    build: .
+    image: solomuse-data:latest
+    volumes:
+      # Mount local data directory to /app/data
+      # Ensure your config.yaml points to paths inside /app/data
+      - ./data:/app/data
+      # Mount config file
+      - ./config.yaml:/app/config.yaml
+      # Cache Demucs models to avoid redownloading
+      - demucs_cache:/root/.cache/torchaudio
+      - demucs_facebook_cache:/root/.cache/demucs
+      # Mount source code for development (hot-reload)
+      - ./solomuse_data:/app/solomuse_data
+    environment:
+      - PYTHONPATH=/app
+    # Keep container running if needed, or allow run args
+    entrypoint: [ "solomuse-data" ]
+    working_dir: /app
+
+volumes:
+  demucs_cache:
+  demucs_facebook_cache:
