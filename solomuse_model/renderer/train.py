@@ -206,8 +206,7 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
                 'model_state_dict': model.state_dict(),
                 'val_loss': val_loss
             }, best_path)
-            tracker.log_artifact(best_path, artifact_name="best_renderer_checkpoint", artifact_type="model")
             
     logger.info("Renderer training completed!")
     tracker.log_summary({"best_val_mse": best_loss})
-    tracker.finish()
+    tracker.finish(best_ckpt_path=best_path)

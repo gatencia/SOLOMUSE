@@ -16,6 +16,20 @@ import datetime
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+import math
+
+def sanitize_for_json(obj):
+    if isinstance(obj, float):
+        if math.isnan(obj): return "NaN"
+        if math.isinf(obj): return "Infinity" if obj > 0 else "-Infinity"
+        return obj
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(sanitize_for_json(v) for v in obj)
+    return obj
 
 def tensor_stats_dict(tensor: torch.Tensor, name: str) -> dict:
     """Helper to dump summary statistics for any tensor payload."""
@@ -317,7 +331,7 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
                     
                     crash_file = debug_dir / f"crash_ep{epoch+1}_b{batch_idx}.json"
                     with open(crash_file, "w") as f:
-                        json.dump(payload, f, indent=2)
+                        json.dump(sanitize_for_json(payload), f, indent=2)
                         
                     csv_file = debug_dir / "bad_batches.csv"
                     write_header = not csv_file.exists()
