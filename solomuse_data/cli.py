@@ -90,6 +90,15 @@ def main():
     situation_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
     situation_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
 
+    intent_parser = subparsers.add_parser("intent-targets", parents=[parent_parser], help="Run Layer 2: Intent Dataset Builder")
+    intent_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    intent_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+    
+    train_intent_parser = subparsers.add_parser("train-intent", parents=[parent_parser], help="Train Layer 2: Baseline Intent Planner")
+
+    infer_intent_parser = subparsers.add_parser("infer-intent", parents=[parent_parser], help="Run inference with Intent Planner")
+    infer_intent_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing situation.npy")
+
     args = parser.parse_args()
 
     try:
@@ -123,6 +132,36 @@ def main():
         limit = getattr(args, "limit", None)
         overwrite = getattr(args, "overwrite", False)
         run_situation_extraction(cfg, args.dataset, limit=limit, overwrite=overwrite)
+    elif args.command == "intent-targets":
+        from solomuse_model.intent.run import run_intent_target_build
+        limit = getattr(args, "limit", None)
+        overwrite = getattr(args, "overwrite", False)
+        run_intent_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
+    elif args.command == "train-intent":
+        from solomuse_model.intent.train import run_train_intent
+        run_train_intent(cfg, args.dataset)
+    elif args.command == "infer-intent":
+        from solomuse_model.intent.infer import IntentInferencer
+        import numpy as np
+        from pathlib import Path
+        
+        seg_dir = Path(getattr(args, "segment_dir"))
+        sit_path = seg_dir / "situation.npy"
+        if not sit_path.exists():
+            logger.error(f"situation.npy not found in {seg_dir}")
+            return
+            
+        sit_vec = np.load(sit_path)
+        inferencer = IntentInferencer(cfg)
+        
+        # Here we hardcode duration to 6.0s for the test command, 
+        # normally duration_s is extracted from manifest/metadata.
+        num_frames = int(6.0 * cfg.intent_hz) 
+        
+        preds = inferencer.predict_sequence(sit_vec, num_frames=num_frames)
+        out_path = seg_dir / "intent_pred.npy"
+        np.save(out_path, preds)
+        logger.info(f"Saved inference prediction to {out_path} with shape {preds.shape}")
 
 def model_status(cfg: PipelineConfig):
     """

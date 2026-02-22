@@ -48,19 +48,44 @@ class SoloMusePipeline:
         import numpy as np
         return np.load(situation_path)
 
-    def plan_intent(self, situation_summary: Any) -> Any:
+    def plan_intent(self, situation_summary: Any, duration_s: float) -> Any:
         """
-        Stub implementation for intent planning.
+        Plan the musical intent based on the situation summary.
+        If a checkpoint is configured, runs inference using the baseline planner.
         
         Args:
-            situation_summary: Summary from summarize_situation.
-            
-        Returns:
-            A stub intent plan.
+            situation_summary: Vector from compute_situation [32].
+            duration_s: Expected duration in seconds to derive frame count.
         """
-        logger.debug("Planning intent...")
-        # TODO: Implement Intent layer
-        raise NotImplementedError("Intent planning not implemented yet.")
+        if self.cfg.intent_checkpoint_path:
+            logger.info(f"Planning intent using model from {self.cfg.intent_checkpoint_path}")
+            from solomuse_model.intent.infer import IntentInferencer
+            inferencer = IntentInferencer(self.cfg, self.cfg.intent_checkpoint_path)
+            num_frames = int(duration_s * self.cfg.intent_hz)
+            return inferencer.predict_sequence(situation_summary, num_frames)
+        else:
+            logger.info("No intent model checkpoint found. Returning zero intent array.")
+            import numpy as np
+            num_frames = int(duration_s * self.cfg.intent_hz)
+            return np.zeros((num_frames, 7), dtype=np.float32)
+        
+    def compute_intent_targets(self, x_audio: Any, y_audio: Any, situation_features: Any = None) -> Any:
+        """
+        Compute intent target vectors from backing and solo audio.
+        """
+        from solomuse_model.intent.extract_targets import extract_intent_targets_v1
+        from solomuse_model.intent.vectorize import vectorize_intent_v1
+        
+        sr = self.cfg.canonical_sample_rate
+        seq = extract_intent_targets_v1(x_audio, y_audio, sr, situation_features, self.cfg)
+        return vectorize_intent_v1(seq)
+        
+    def load_intent_targets(self, intent_path: str) -> Any:
+        """
+        Load precomputed intent target matrix.
+        """
+        import numpy as np
+        return np.load(intent_path)
 
     def render_audio(self, intent_plan: Any) -> Any:
         """

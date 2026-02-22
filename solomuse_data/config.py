@@ -53,6 +53,24 @@ class PipelineConfig(BaseModel):
     situation_save_npy: bool = True
     situation_feature_version: str = "v1"
 
+    # --- Intent Targets (Layer 2) ---
+    intent_enable: bool = True
+    intent_hz: int = 10
+    intent_feature_version: str = "v1"
+    intent_use_centroid_for_register: bool = True
+    intent_use_chroma_tension_proxy: bool = True
+
+    # --- Baseline Intent Planner (Training/Inference) ---
+    intent_model_type: str = "gru"
+    intent_hidden_dim: int = 128
+    intent_num_layers: int = 2
+    intent_dropout: float = 0.1
+    intent_lr: float = 1e-3
+    intent_epochs: int = 20
+    intent_batch_size: int = 16
+    intent_val_split: float = 0.1
+    intent_checkpoint_path: str | None = None
+
     @field_validator("canonical_sample_rate")
     @classmethod
     def validate_sample_rate(cls, v):
