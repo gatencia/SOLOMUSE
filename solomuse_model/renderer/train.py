@@ -9,6 +9,8 @@ from solomuse_data.config import PipelineConfig
 from solomuse_model.renderer.dataset import RendererDataset
 from solomuse_model.renderer.model_v1 import RendererConv1D_V1
 from solomuse_model.renderer.codec_interface import WaveChunkCodec
+from solomuse_model.utils.experiment_tracking import ExperimentTracker
+from solomuse_model.paths import get_renderer_checkpoint_path
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +22,8 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     
     # 1. Manifest
     manifest_candidates = [
-        Path(cfg.output_root) / "segments" / dataset_name / "manifest_intent.csv",
-        Path(cfg.output_root) / "manifest_intent.csv"
+        Path(cfg.output_root) / "segments" / dataset_name / "manifest_renderer.csv",
+        Path(cfg.output_root) / "manifest_renderer.csv"
     ]
     
     manifest_path = None
@@ -97,6 +99,14 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     train_loader = DataLoader(train_ds, batch_size=cfg.renderer_batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_ds, batch_size=cfg.renderer_batch_size, shuffle=False, collate_fn=collate_fn)
 
+    logger.info(f"Loaded {len(train_ds)} items for train split")
+    logger.info(f"Loaded {len(val_ds)} items for val split")
+    
+    if len(train_loader) > 0:
+        _bx, _bi, _bs, _by = next(iter(train_loader))
+        logger.info(f"Diagnostics - X: shape={_bx.shape}, mean={_bx.mean().item():.4f}, std={_bx.std().item():.4f}")
+        logger.info(f"Diagnostics - Target Y: shape={_by.shape}, min={_by.min().item():.4f}, max={_by.max().item():.4f}")
+
     # 3. Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
@@ -121,23 +131,50 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     criterion = nn.MSELoss()
     
     # 4. Training
-    best_loss = float('inf')
-    ckpt_dir = Path(cfg.output_root) / "models" / "renderer_v1"
+    ckpt_dir = Path(cfg.output_root) / "models" / f"renderer_{cfg.renderer_model_version}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    best_path = ckpt_dir / "best.pt"
+    best_path = get_renderer_checkpoint_path(cfg)
+    logger.info(f"Renderer checkpoint will be saved to: {best_path}")
+    
+    tracker = ExperimentTracker(cfg, ckpt_dir, job_type="train_renderer")
+    best_loss = float('inf')
+    
+    if getattr(cfg, "renderer_overfit_one_batch", False):
+        logger.warning("OVERFIT MODE: Forcing pipeline to run on a single batch iteratively.")
+        single_batch = next(iter(train_loader))
+        train_loader_iter = lambda: (single_batch for _ in range(len(train_loader)))
+    else:
+        train_loader_iter = lambda: train_loader
     
     for epoch in range(cfg.renderer_epochs):
         model.train()
         train_loss = 0.0
         
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{cfg.renderer_epochs} [Train]")
-        for bx, bi, bs, by in pbar:
+        pbar = tqdm(train_loader_iter(), total=len(train_loader), desc=f"Ep {epoch+1}/{cfg.renderer_epochs} [Train]")
+        for batch_idx, (bx, bi, bs, by) in enumerate(pbar):
+            if not (torch.isfinite(bx).all() and torch.isfinite(bi).all() and torch.isfinite(bs).all() and torch.isfinite(by).all()):
+                raise RuntimeError(f"NaN/Inf found in Renderer inputs/targets. Ep {epoch+1}, Batch {batch_idx}")
+            
             bx, bi, bs, by = bx.to(device), bi.to(device), bs.to(device), by.to(device)
             
             optimizer.zero_grad()
             preds = model(bx, bi, bs)
+            
+            if not torch.isfinite(preds).all():
+                raise RuntimeError(f"NaN/Inf found in Renderer predictions. Ep {epoch+1}, Batch {batch_idx}")
+                
             loss = criterion(preds, by)
+            
+            if not torch.isfinite(loss):
+                raise RuntimeError(f"NaN/Inf found in Renderer loss. Ep {epoch+1}, Batch {batch_idx}")
+                
             loss.backward()
+            
+            grad_clip = getattr(cfg, "renderer_grad_clip", 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            if not torch.isfinite(grad_norm):
+                raise RuntimeError(f"NaN/Inf in Iterator gradients before clipping. Ep {epoch+1}, Batch {batch_idx}")
+                
             optimizer.step()
             
             train_loss += loss.item() * bx.size(0)
@@ -148,20 +185,29 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for bx, bi, bs, by in DataLoader(val_ds, batch_size=cfg.renderer_batch_size, collate_fn=collate_fn):
-                bx, bi, bs, by = bx.to(device), bi.to(device), bs.to(device), by.to(device)
-                preds = model(bx, bi, bs)
-                val_loss += criterion(preds, by).item() * bx.size(0)
-                
-        val_loss /= max(len(val_ds), 1.0)
+            if len(val_ds) > 0:
+                for bx, bi, bs, by in DataLoader(val_ds, batch_size=cfg.renderer_batch_size, collate_fn=collate_fn):
+                    bx, bi, bs, by = bx.to(device), bi.to(device), bs.to(device), by.to(device)
+                    preds = model(bx, bi, bs)
+                    val_loss += criterion(preds, by).item() * bx.size(0)
+                val_loss /= len(val_ds)
+            else:
+                val_loss = train_loss
         
         logger.info(f"Epoch {epoch+1} - Train MSE: {train_loss:.4f}, Val MSE: {val_loss:.4f}")
         
-        if val_loss < best_loss:
+        metrics = {"train/mse": train_loss, "val/mse": val_loss, "train/lr": optimizer.param_groups[0]['lr']}
+        tracker.log_metrics(metrics, step=epoch+1)
+        
+        if val_loss <= best_loss: # <= ensures at least 1 save if val_loss is flat
             best_loss = val_loss
+            logger.info(f"Epoch {epoch+1}: New best validation MSE ({best_loss:.4f}). Saving checkpoint.")
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'val_loss': val_loss
             }, best_path)
+            tracker.log_artifact(best_path, artifact_name="best_renderer_checkpoint", artifact_type="model")
             
-    logger.info(f"Renderer training done! Best saved to {best_path}")
+    logger.info("Renderer training completed!")
+    tracker.log_summary({"best_val_mse": best_loss})
+    tracker.finish()

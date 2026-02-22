@@ -101,6 +101,8 @@ def main():
     eval_intent_parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train, val, test, all)")
     eval_intent_parser.add_argument("--wandb", action="store_true", help="Enable W&B for this run")
 
+    inspect_parser = subparsers.add_parser("inspect-intent-crashes", parents=[parent_parser], help="Inspect Layer 2 Intent bad batches payload")
+
     infer_intent_parser = subparsers.add_parser("infer-intent", parents=[parent_parser], help="Run inference with Intent Planner")
     infer_intent_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing situation.npy")
 
@@ -165,6 +167,9 @@ def main():
             cfg.wandb_enabled = True
         from solomuse_model.intent.eval import run_eval_intent
         run_eval_intent(cfg, args.dataset, split=args.split)
+    elif args.command == "inspect-intent-crashes":
+        from solomuse_model.intent.inspect import inspect_intent_crashes
+        inspect_intent_crashes(cfg, args.dataset)
     elif args.command == "infer-intent":
         from solomuse_model.intent.infer import IntentInferencer
         import numpy as np

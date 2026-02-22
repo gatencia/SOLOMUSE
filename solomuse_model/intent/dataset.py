@@ -23,6 +23,8 @@ class IntentDataset(Dataset):
         """
         self.rows = data_df.to_dict('records')
         self.segments_root = Path(cfg.output_root) / "segments"
+        self.fail_input = getattr(cfg, "intent_fail_on_nonfinite_input", True)
+        self.fail_target = getattr(cfg, "intent_fail_on_nonfinite_target", True)
         logger.info(f"Loaded {len(self.rows)} items for dataset split.")
 
     def __len__(self):
@@ -66,15 +68,27 @@ class IntentDataset(Dataset):
         # Load
         # sit_vec: [32]
         sit_vec = np.load(situation_path).astype(np.float32)
+        
+        if self.fail_input and not np.isfinite(sit_vec).all():
+            raise ValueError(f"CRITICAL: Non-finite values (NaN/Inf) detected in Situation input array for track={track_id}, segment={segment_id} at {situation_path}")
+            
         # intent_mat: [F, 7]
         intent_mat = np.load(intent_path).astype(np.float32)
+        
+        if self.fail_target and not np.isfinite(intent_mat).all():
+            raise ValueError(f"CRITICAL: Non-finite values (NaN/Inf) detected in Intent target array for track={track_id}, segment={segment_id} at {intent_path}")
         
         # Broadcast situation vector to [F, 32] so it matches time resolution
         # This acts as a global conditioning vector at every timestep
         F = intent_mat.shape[0]
         sit_mat = np.tile(sit_vec, (F, 1))
         
-        return torch.from_numpy(sit_mat), torch.from_numpy(intent_mat)
+        return {
+            "situation": torch.from_numpy(sit_mat), 
+            "intent": torch.from_numpy(intent_mat),
+            "track_id": track_id,
+            "segment_id": segment_id
+        }
 
 def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
     """
@@ -84,7 +98,7 @@ def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
     """
     from torch.utils.data import DataLoader
     
-    targets_dir = Path(cfg.output_root) / "targets" / dataset_name
+    targets_dir = Path(cfg.output_root) / "segments" / dataset_name
     manifest_path = targets_dir / "manifest_intent.csv"
     split_manifest_path = targets_dir / "manifest_intent_splits.csv"
     

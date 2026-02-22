@@ -70,12 +70,24 @@ class PipelineConfig(BaseModel):
     intent_hidden_dim: int = 128
     intent_num_layers: int = 2
     intent_dropout: float = 0.1
-    intent_lr: float = 3e-4
-    intent_grad_clip: float = 1.0
+    intent_lr: float = 1e-4
+    intent_grad_clip: float = 0.5
     intent_epochs: int = 20
     intent_batch_size: int = 16
     intent_checkpoint_path: str | None = None
     intent_overfit_one_batch: bool = False
+    
+    # --- Intent Training Stability & Debugging ---
+    intent_weight_decay: float = 1e-5
+    intent_skip_bad_batches: bool = False
+    intent_max_bad_batches_per_epoch: int = 0
+    intent_fail_on_nonfinite_input: bool = True
+    intent_fail_on_nonfinite_target: bool = True
+    intent_skip_optimizer_step_on_large_grad_norm: bool = False
+    intent_large_grad_norm_threshold: float = 100.0
+    intent_debug_save_crash_batches: bool = True
+    intent_debug_log_batch_stats_every_n: int = 0
+    intent_force_cpu_debug: bool = False
     
     # Eval config
     intent_eval_binary_threshold: float | None = 0.5
@@ -90,10 +102,12 @@ class PipelineConfig(BaseModel):
     # --- Renderer Network (Training/Inference) ---
     renderer_model_type: str = "conv1d"
     renderer_hidden_dim: int = 128
-    renderer_lr: float = 1e-3
+    renderer_lr: float = 3e-4 # Reduced for numerical stability
+    renderer_grad_clip: float = 1.0
     renderer_epochs: int = 20
     renderer_batch_size: int = 8
     renderer_checkpoint_path: str | None = None
+    renderer_overfit_one_batch: bool = False
     overlap_add_enable: bool = True
     
     # --- W&B Experiment Tracking ---

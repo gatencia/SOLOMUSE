@@ -61,6 +61,11 @@ segment_hop_seconds: 3.0
 min_segment_energy: 0.0001
 enable_weak_demucs: true         # Set to true if using weak data
 demucs_model: "htdemucs"         # Demucs model (requires 'pip install demucs')
+
+# Intent Planner Stability Settings (Optional overrides for Apple Silicon MPS)
+intent_force_cpu_debug: true
+intent_skip_bad_batches: false
+intent_skip_optimizer_step_on_large_grad_norm: true
 ```
 
 ## 3. Usage
@@ -108,12 +113,30 @@ temp
 Outputs: `data/processed/segments/{dataset}/...` and the final manifest `data/processed/segments/{dataset}/manifest.csv`.
 
 ## 4. Final Dataset
-The final training data is located in the segmentation manifests.
-- `data/processed/segments/slakh/manifest.csv`
 - `data/processed/segments/musdb/manifest.csv`
 
+## 5. Training the Intent Planner
 
-## 5. Docker Support
+Once your datasets are preprocessed and segmented, you can train and evaluate the baseline Intent Planner network.
+
+### Train the Model
+```bash
+solomuse-data train-intent --config config.yaml --dataset slakh
+```
+Checkpoints will be saved to `data/processed/models/intent_v1/best.pt`.
+
+### Evaluate the Model
+```bash
+solomuse-data eval-intent --config config.yaml --dataset slakh 
+```
+
+### Inspect Training Crashes (NaN/Inf)
+The pipeline features hardened PyTorch numerical guards. If a gradient explosion occurs (frequent on Apple Silicon MPS FP16 accumulators), a detailed JSON dump is captured. You can inspect the origin of the crash using:
+```bash
+solomuse-data inspect-intent-crashes --config config.yaml --dataset slakh
+```
+
+## 6. Docker Support
 
 You can run the entire pipeline in a container without installing dependencies manually.
 

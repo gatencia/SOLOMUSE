@@ -20,6 +20,10 @@ class IntentPlannerGRU_V1(nn.Module):
         )
         
         self.linear = nn.Linear(hidden_dim * 2, output_dim)
+        # Initialize linear weights safely
+        nn.init.xavier_uniform_(self.linear.weight)
+        nn.init.zeros_(self.linear.bias)
+        
         # Intent targets are bounded [0, 1]
         self.activation = nn.Sigmoid()
 
@@ -35,11 +39,17 @@ class IntentPlannerGRU_V1(nn.Module):
         Returns:
             Tensor of shape [B, F, output_dim]
         """
+        # Clamp massive outliers to prevent GRU exploding gradients
+        x = torch.clamp(x, min=-10.0, max=10.0)
+        
         # gru_out: [B, F, hidden_dim * 2]
         gru_out, _ = self.gru(x)
         
         # logits: [B, F, output_dim]
+        # Clamp GRU hidden states before linear projection to definitively block infs
+        gru_out = torch.clamp(gru_out, min=-10.0, max=10.0)
         logits = self.linear(gru_out)
+        logits = torch.clamp(logits, min=-10.0, max=10.0)
         
         # predictions: [B, F, output_dim] in [0, 1]
         preds = self.activation(logits)

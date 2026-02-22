@@ -12,5 +12,10 @@ segment_seconds: 6.0
 segment_hop_seconds: 3.0
 min_segment_energy: 0.0001
 
+# Stability fallbacks for MPS hardware bugs inside GRU
+intent_force_cpu_debug: true
+intent_skip_bad_batches: true
+intent_max_bad_batches_per_epoch: 100
+
 enable_weak_demucs: false
 demucs_model: "htdemucs"
