@@ -65,8 +65,13 @@ class PipelineConfig(BaseModel):
     intent_hidden_dim: int = 128
     intent_num_layers: int = 2
     intent_dropout: float = 0.1
-    intent_lr: float = 1e-3
+    intent_lr: float = 3e-4
+    intent_grad_clip: float = 1.0
     intent_epochs: int = 20
+    intent_batch_size: int = 16
+    intent_val_split: float = 0.1
+    intent_checkpoint_path: str | None = None
+    intent_overfit_one_batch: bool = False
     intent_batch_size: int = 16
     intent_val_split: float = 0.1
     intent_checkpoint_path: str | None = None

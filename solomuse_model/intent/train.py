@@ -66,6 +66,22 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     if num_train_batches == 0:
         raise RuntimeError(f"Dataset loaded 0 batches. Adjust config `intent_batch_size` or supply more data.")
 
+    # Target Scale Diagnostics
+    logger.info("Extracting first batch for sample diagnostics...")
+    for diag_X, diag_Y in train_loader:
+        logger.info(f"  - Situation [X] shape: {diag_X.shape}, mean: {diag_X.mean().item():.4f}, std: {diag_X.std().item():.4f}, min: {diag_X.min().item():.4f}, max: {diag_X.max().item():.4f}")
+        logger.info(f"  - Intent    [Y] shape: {diag_Y.shape}, mean: {diag_Y.mean().item():.4f}, std: {diag_Y.std().item():.4f}, min: {diag_Y.min().item():.4f}, max: {diag_Y.max().item():.4f}")
+        
+        if not torch.isfinite(diag_X).all():
+            logger.warning("! WARNING: NaN/Inf detected in X diagnostics !")
+        if not torch.isfinite(diag_Y).all():
+            logger.warning("! WARNING: NaN/Inf detected in Y diagnostics !")
+        break
+        
+    if getattr(cfg, "intent_overfit_one_batch", False):
+        logger.warning("!!! OVERFIT_ONE_BATCH MODE FLAG ENABLED. Training strictly on the first batch over and over. !!!")
+        overfit_batch = next(iter(train_loader))
+
     # 3. Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
@@ -98,18 +114,35 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
         train_loss = 0.0
         
         # tqdm wrapper for epoch
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.intent_epochs} [Train]")
-        for X, Y in pbar:
+        pbar_loader = [overfit_batch] if getattr(cfg, "intent_overfit_one_batch", False) else train_loader
+        pbar = tqdm(pbar_loader, desc=f"Epoch {epoch+1}/{cfg.intent_epochs} [Train]")
+        
+        for batch_idx, (X, Y) in enumerate(pbar):
             X, Y = X.to(device), Y.to(device)
+            
+            if not torch.isfinite(X).all() or not torch.isfinite(Y).all():
+                raise RuntimeError(f"Input/Target contains NaN/Inf. Epoch {epoch+1}, Batch {batch_idx}")
             
             optimizer.zero_grad()
             preds = model(X)
             
+            if not torch.isfinite(preds).all():
+                raise RuntimeError(f"Model predictions contain NaN/Inf. Epoch {epoch+1}, Batch {batch_idx}. Preds min/max: {preds.min().item():.4f} / {preds.max().item():.4f}")
+            
             loss = criterion(preds, Y)
+            
+            if not torch.isfinite(loss):
+                logger.error(f"Loss is NaN/Inf! Inputs mean/std: {X.mean().item():.4f}/{X.std().item():.4f} | Preds mean/std/min/max: {preds.mean().item():.4f}/{preds.std().item():.4f}/{preds.min().item():.4f}/{preds.max().item():.4f} | Target min/max: {Y.min().item():.4f}/{Y.max().item():.4f}")
+                raise RuntimeError(f"Training loss is NaN. Epoch {epoch+1}, Batch {batch_idx}")
+            
             loss.backward()
             
-            # Optional gradient clip
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # Gradient clipping
+            clip_val = getattr(cfg, "intent_grad_clip", 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
+            
+            if not torch.isfinite(grad_norm):
+                raise RuntimeError(f"Gradient norm is NaN/Inf after clipping. Epoch {epoch+1}, Batch {batch_idx}")
             
             
             optimizer.step()
@@ -140,25 +173,31 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
                 
         val_loss /= len(val_ds) if len(val_ds) > 0 else 1.0
         
-        if len(val_preds) > 0:
+        eval_metric = float('inf')
+        has_val = len(val_preds) > 0
+        
+        if has_val:
             all_preds = torch.cat(val_preds, dim=0)
             all_targs = torch.cat(val_targs, dim=0)
             metrics = compute_intent_metrics(all_preds, all_targs)
-            
+            eval_metric = val_loss
             logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f}, Val MSE: {val_loss:.4f}, Val MAE: {metrics['val_mae_overall']:.4f}")
         else:
-            logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f} (No validation data)")
+            eval_metric = train_loss
+            logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f} (No validation split; selecting checkpoint by train loss)")
             
         # Checkpoint
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if eval_metric < best_val_loss:
+            best_val_loss = eval_metric
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': best_val_loss,
+                'val_loss': best_val_loss if has_val else None,
+                'train_loss': train_loss,
                 'cfg': cfg.model_dump()
             }, best_ckpt_path)
-            logger.info(f"Saved new best checkpoint with Val MSE {best_val_loss:.4f}")
+            metric_str = f"Val MSE {best_val_loss:.4f}" if has_val else f"Train MSE {best_val_loss:.4f}"
+            logger.info(f"Saved new best checkpoint with {metric_str}")
             
     logger.info(f"Training completed. Best checkpoint saved at {best_ckpt_path}")
