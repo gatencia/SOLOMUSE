@@ -60,6 +60,11 @@ class PipelineConfig(BaseModel):
     intent_use_centroid_for_register: bool = True
     intent_use_chroma_tension_proxy: bool = True
 
+    # --- Dataset Split Settings ---
+    intent_train_ratio: float = 0.8
+    intent_val_ratio: float = 0.1
+    intent_test_ratio: float = 0.1
+
     # --- Baseline Intent Planner (Training/Inference) ---
     intent_model_type: str = "gru"
     intent_hidden_dim: int = 128
@@ -69,12 +74,11 @@ class PipelineConfig(BaseModel):
     intent_grad_clip: float = 1.0
     intent_epochs: int = 20
     intent_batch_size: int = 16
-    intent_val_split: float = 0.1
     intent_checkpoint_path: str | None = None
     intent_overfit_one_batch: bool = False
-    intent_batch_size: int = 16
-    intent_val_split: float = 0.1
-    intent_checkpoint_path: str | None = None
+    
+    # Eval config
+    intent_eval_binary_threshold: float | None = 0.5
 
     # --- Renderer Data (Layer 3) ---
     renderer_enable: bool = True
@@ -91,6 +95,18 @@ class PipelineConfig(BaseModel):
     renderer_batch_size: int = 8
     renderer_checkpoint_path: str | None = None
     overlap_add_enable: bool = True
+    
+    # --- W&B Experiment Tracking ---
+    wandb_enabled: bool = False
+    wandb_project: str = "solomuse"
+    wandb_entity: str | None = None
+    wandb_mode: str = "online"
+    wandb_tags: list[str] = Field(default_factory=lambda: ["intent"])
+    wandb_group: str | None = None
+    wandb_run_name: str | None = None
+    wandb_log_every_n_steps: int = 1
+    wandb_watch_model: bool = False
+    wandb_save_checkpoints_as_artifacts: bool = True
 
     @field_validator("canonical_sample_rate")
     @classmethod

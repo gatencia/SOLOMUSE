@@ -95,6 +95,11 @@ def main():
     intent_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
     
     train_intent_parser = subparsers.add_parser("train-intent", parents=[parent_parser], help="Train Layer 2: Baseline Intent Planner")
+    train_intent_parser.add_argument("--wandb", action="store_true", help="Enable W&B for this run")
+
+    eval_intent_parser = subparsers.add_parser("eval-intent", parents=[parent_parser], help="Evaluate Layer 2: Baseline Intent Planner")
+    eval_intent_parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train, val, test, all)")
+    eval_intent_parser.add_argument("--wandb", action="store_true", help="Enable W&B for this run")
 
     infer_intent_parser = subparsers.add_parser("infer-intent", parents=[parent_parser], help="Run inference with Intent Planner")
     infer_intent_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing situation.npy")
@@ -151,8 +156,15 @@ def main():
         overwrite = getattr(args, "overwrite", False)
         run_intent_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
     elif args.command == "train-intent":
+        if getattr(args, "wandb", False):
+            cfg.wandb_enabled = True
         from solomuse_model.intent.train import run_train_intent
         run_train_intent(cfg, args.dataset)
+    elif args.command == "eval-intent":
+        if getattr(args, "wandb", False):
+            cfg.wandb_enabled = True
+        from solomuse_model.intent.eval import run_eval_intent
+        run_eval_intent(cfg, args.dataset, split=args.split)
     elif args.command == "infer-intent":
         from solomuse_model.intent.infer import IntentInferencer
         import numpy as np

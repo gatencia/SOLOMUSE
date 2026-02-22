@@ -5,10 +5,11 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import os
 from solomuse_data.config import PipelineConfig
-from solomuse_model.intent.dataset import IntentDataset
-from solomuse_model.intent.model_v1 import IntentPlannerGRU_V1
 from solomuse_model.intent.metrics import compute_intent_metrics
+from solomuse_model.intent.dataset import build_intent_dataloaders
+from solomuse_model.utils.experiment_tracking import ExperimentTracker
 from solomuse_model.paths import get_intent_checkpoint_path
+import datetime
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -19,46 +20,20 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     """
     logger.info(f"Starting intent planner training for {dataset_name}...")
     
-    # 1. Manifest path
-    manifest_candidates = [
-        Path(cfg.output_root) / "segments" / dataset_name / "manifest_intent.csv",
-        Path(cfg.output_root) / "manifest_intent.csv"
-    ]
-    
-    manifest_path = None
-    for p in manifest_candidates:
-        if p.exists():
-            manifest_path = p
-            break
-            
-    if not manifest_path:
-        logger.error(f"Intent manifest not found for {dataset_name}")
-        return
-
-    # 2. Datasets & Loaders
+    # 1. Datasets & Loaders
     try:
-        train_ds = IntentDataset(manifest_path, split="train", val_ratio=cfg.intent_val_split)
-        val_ds = IntentDataset(manifest_path, split="val", val_ratio=cfg.intent_val_split)
+        train_loader, val_loader, test_loader = build_intent_dataloaders(cfg, dataset_name)
     except Exception as e:
         logger.error(f"Failed to initialize datasets: {e}")
         return
 
-    if len(train_ds) == 0:
-        raise RuntimeError(f"Empty training dataset for {dataset_name}. No valid segments found.")
-        
-    # We use a custom collate to handle variable sequence lengths if they exist, 
-    # but currently segments are fixed window (e.g. 6s), so they should all be F frames.
-    # Just in case, PyTorch DataLoader defaults should work if F is constant.
-    # Otherwise, pad_sequence is needed. Assuming F is constant for now based on V1 design.
-    
-    train_loader = DataLoader(train_ds, batch_size=cfg.intent_batch_size, shuffle=True, drop_last=False)
-    val_loader = DataLoader(val_ds, batch_size=cfg.intent_batch_size, shuffle=False)
-
     num_train_batches = len(train_loader)
     num_val_batches = len(val_loader)
+    train_ds = train_loader.dataset
+    val_ds = val_loader.dataset
+    test_ds = test_loader.dataset
     
     logger.info(f"Training setup:")
-    logger.info(f"  - Manifest: {manifest_path}")
     logger.info(f"  - Train items: {len(train_ds)} ({num_train_batches} batches)")
     logger.info(f"  - Val items: {len(val_ds)} ({num_val_batches} batches)")
     logger.info(f"  - Batch size: {cfg.intent_batch_size}")
@@ -101,7 +76,12 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.intent_lr)
     criterion = nn.MSELoss()
     
-    # 4. Training Loop
+    # 4. Tracker Setup
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(cfg.output_root) / "experiments" / "intent" / f"train_{ts}"
+    tracker = ExperimentTracker(cfg, run_dir, job_type="train")
+    
+    # 5. Training Loop
     best_val_loss = float('inf')
     best_ckpt_path = get_intent_checkpoint_path(cfg)
     best_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -176,15 +156,49 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
         eval_metric = float('inf')
         has_val = len(val_preds) > 0
         
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        val_preds = []
+        val_targs = []
+        
+        with torch.no_grad():
+            for X, Y in DataLoader(val_ds, batch_size=cfg.intent_batch_size):
+                X, Y = X.to(device), Y.to(device)
+                preds = model(X)
+                loss = criterion(preds, Y)
+                val_loss += loss.item() * X.size(0)
+                
+                val_preds.append(preds)
+                val_targs.append(Y)
+                
+        val_loss /= len(val_ds) if len(val_ds) > 0 else 1.0
+        
+        has_val = len(val_preds) > 0
+        
+        # Build Epoch Metrics
+        epoch_metrics = {
+            "epoch": epoch + 1,
+            "train/loss": train_loss,
+            "train/mse": train_loss,
+            "learning_rate": optimizer.param_groups[0]['lr']
+        }
+        
         if has_val:
             all_preds = torch.cat(val_preds, dim=0)
             all_targs = torch.cat(val_targs, dim=0)
-            metrics = compute_intent_metrics(all_preds, all_targs)
-            eval_metric = val_loss
-            logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f}, Val MSE: {val_loss:.4f}, Val MAE: {metrics['val_mae_overall']:.4f}")
+            v_metrics = compute_intent_metrics(all_preds, all_targs, threshold=cfg.intent_eval_binary_threshold)
+            
+            for k, v in v_metrics.items():
+                epoch_metrics[f"val/{k}"] = v
+                
+            eval_metric = epoch_metrics["val/mse"]
+            logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f}, Val MSE: {eval_metric:.4f}, Val MAE: {epoch_metrics['val/mae']:.4f}")
         else:
             eval_metric = train_loss
             logger.info(f"Epoch {epoch+1} Summary: Train MSE: {train_loss:.4f} (No validation split; selecting checkpoint by train loss)")
+            
+        tracker.log_metrics(epoch_metrics, step=epoch+1)
             
         # Checkpoint
         if eval_metric < best_val_loss:
@@ -200,4 +214,17 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
             metric_str = f"Val MSE {best_val_loss:.4f}" if has_val else f"Train MSE {best_val_loss:.4f}"
             logger.info(f"Saved new best checkpoint with {metric_str}")
             
-    logger.info(f"Training completed. Best checkpoint saved at {best_ckpt_path}")
+    # Save final artifacts and close tracker
+    summary = {
+        "dataset": dataset_name,
+        "epochs": cfg.intent_epochs,
+        "best_val_loss": best_val_loss,
+        "metric_used": "val/mse" if has_val else "train/mse",
+        "n_train": len(train_ds),
+        "n_val": len(val_ds),
+        "checkpoint_path": str(best_ckpt_path)
+    }
+    tracker.log_summary(summary)
+    tracker.finish(best_ckpt_path=best_ckpt_path)
+    
+    logger.info(f"Training completed. Best checkpoint tracked and saved at {best_ckpt_path}")
