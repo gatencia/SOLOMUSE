@@ -77,6 +77,15 @@ class PipelineConfig(BaseModel):
     renderer_frame_ms: float = 20.0
     renderer_hop_ms: float = 10.0
     renderer_target_version: str = "v1"
+    
+    # --- Renderer Network (Training/Inference) ---
+    renderer_model_type: str = "conv1d"
+    renderer_hidden_dim: int = 128
+    renderer_lr: float = 1e-3
+    renderer_epochs: int = 20
+    renderer_batch_size: int = 8
+    renderer_checkpoint_path: str | None = None
+    overlap_add_enable: bool = True
 
     @field_validator("canonical_sample_rate")
     @classmethod

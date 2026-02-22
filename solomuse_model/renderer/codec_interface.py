@@ -39,7 +39,30 @@ class AudioCodec(ABC):
     def frame_rate_hz(self) -> float:
         """Return the effective frame rate / frequency of the encoded sequence."""
         pass
-
+        
+    @property
+    @abstractmethod
+    def code_type(self) -> str:
+        """Return 'continuous' or 'discrete'"""
+        pass
+        
+    @property
+    @abstractmethod
+    def code_dim(self) -> int:
+        """Return dimensionality of continuous representations (or None if discrete)"""
+        pass
+        
+    @property
+    @abstractmethod
+    def num_codebooks(self) -> int:
+        """Return number of parallel quantizers/codebooks for discrete representation (or None if continuous)"""
+        pass
+        
+    @property
+    @abstractmethod
+    def vocab_size(self) -> int:
+        """Return the dictionary size per codebook for discrete representation (or None if continuous)"""
+        pass
 
 class WaveChunkCodec(AudioCodec):
     """
@@ -116,3 +139,19 @@ class WaveChunkCodec(AudioCodec):
 
     def frame_rate_hz(self) -> float:
         return 1000.0 / self.hop_ms
+
+    @property
+    def code_type(self) -> str:
+        return "continuous"
+        
+    @property
+    def code_dim(self) -> int:
+        return self.frame_size
+        
+    @property
+    def num_codebooks(self) -> int:
+        return None
+        
+    @property
+    def vocab_size(self) -> int:
+        return None

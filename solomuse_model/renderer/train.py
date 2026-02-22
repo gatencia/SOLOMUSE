@@ -49,6 +49,13 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     # Custom collation to encode X on the fly
     codec = WaveChunkCodec(frame_ms=cfg.renderer_frame_ms, hop_ms=cfg.renderer_hop_ms, target_sr=cfg.canonical_sample_rate)
     
+    if codec.code_type == "discrete":
+        raise NotImplementedError(
+            "Discrete token training not yet implemented. "
+            "The baseline RendererConv1D_V1 model expects continuous latents/wavechunks and an MSELoss optimization path. "
+            "Please follow the docs/renderer_upgrade_plan.md to integrate the autoregressive transformer logic."
+        )
+    
     def collate_fn(batch):
         xs, ints, sits, ys = [], [], [], []
         # Batch items are tuples: (RendererInputV1, RendererTargetV1)

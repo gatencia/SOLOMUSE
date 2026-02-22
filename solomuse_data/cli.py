@@ -103,6 +103,15 @@ def main():
     renderer_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
     renderer_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
 
+    train_ren_parser = subparsers.add_parser("train-renderer", parents=[parent_parser], help="Train Layer 3: Baseline Renderer")
+    
+    render_seg_parser = subparsers.add_parser("render-segment", parents=[parent_parser], help="Render offline segment")
+    render_seg_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment")
+    
+    live_sim_parser = subparsers.add_parser("live-sim", parents=[parent_parser], help="Run streaming live simulation")
+    live_sim_parser.add_argument("--wav", type=str, required=True, help="Input backing track path")
+    live_sim_parser.add_argument("--out", type=str, required=True, help="Output solo audio path")
+
     args = parser.parse_args()
 
     try:
@@ -171,6 +180,49 @@ def main():
         limit = getattr(args, "limit", None)
         overwrite = getattr(args, "overwrite", False)
         run_renderer_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
+    elif args.command == "train-renderer":
+        from solomuse_model.renderer.train import run_train_renderer
+        run_train_renderer(cfg, args.dataset)
+    elif args.command == "render-segment":
+        from solomuse_data.io import read_audio
+        import soundfile as sf
+        from pathlib import Path
+        
+        seg_dir = Path(getattr(args, "segment_dir"))
+        x_path = seg_dir / "x.wav"
+        sit_path = seg_dir / "situation.npy"
+        intent_path = seg_dir / "intent_pred.npy"
+        
+        # fallback to intent_targets if no preds
+        if not intent_path.exists():
+            intent_path = seg_dir / "intent_targets.npy"
+            
+        x_audio, sr = read_audio(str(x_path))
+        sit = np.load(sit_path) if sit_path.exists() else np.zeros(32, dtype=np.float32)
+        intent = np.load(intent_path)
+        
+        from solomuse_model.pipeline import SoloMusePipeline
+        pipeline = SoloMusePipeline(cfg)
+        y_hat = pipeline.render_audio(x_audio, intent, sit)
+        
+        out_path = seg_dir / "y_hat.wav"
+        sf.write(str(out_path), y_hat, sr)
+        logger.info(f"Rendered offline segment solo to {out_path}")
+    elif args.command == "live-sim":
+        from solomuse_data.io import read_audio
+        import soundfile as sf
+        
+        x_path = getattr(args, "wav")
+        out_path = getattr(args, "out")
+        
+        x_audio, sr = read_audio(x_path)
+        
+        from solomuse_model.pipeline import SoloMusePipeline
+        pipeline = SoloMusePipeline(cfg)
+        y_out = pipeline.run_live_simulation(x_audio, chunk_size_s=1.0)
+        
+        sf.write(out_path, y_out, sr)
+        logger.info(f"Live Simulation computed! Out: {out_path}")
 
 def model_status(cfg: PipelineConfig):
     """

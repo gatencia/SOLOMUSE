@@ -87,31 +87,55 @@ class SoloMusePipeline:
         import numpy as np
         return np.load(intent_path)
 
-    def render_audio(self, intent_plan: Any) -> Any:
+    def render_audio(self, x_audio: Any, intent_plan: Any, situation_summary: Any = None) -> Any:
         """
-        Stub implementation for audio rendering.
+        Produce solo audio given backing context and an intent plan.
         
         Args:
-            intent_plan: Plan from plan_intent.
+            x_audio: Input backing context array.
+            intent_plan: Intent [F, 7].
+            situation_summary: Optional situation array [32].
             
         Returns:
-            A stub rendered audio segment.
+            y_hat_audio: [T] array
         """
         logger.debug("Rendering audio...")
-        # TODO: Implement Renderer layer
-        raise NotImplementedError("Audio rendering not implemented yet.")
+        if not self.cfg.renderer_enable:
+            logger.warning("Renderer disabled. Returning silence.")
+            import numpy as np
+            return np.zeros_like(x_audio)
+            
+        from solomuse_model.renderer.infer import render_segment
+        if situation_summary is None:
+            import numpy as np
+            situation_summary = np.zeros(32, dtype=np.float32)
+            
+        y_hat = render_segment(x_audio, intent_plan, situation_summary, self.cfg, self.cfg.renderer_checkpoint_path)
+        return y_hat
+
+    def run_live_simulation(self, x_full: Any, chunk_size_s: float = 1.0) -> Any:
+        """
+        Runs the full streaming overlap-add pipeline on a complete backing track.
+        """
+        logger.info(f"Simulating live stream (chunk_size={chunk_size_s}s)")
+        from solomuse_model.renderer.streaming import LiveSimulationRunner
+        runner = LiveSimulationRunner(self)
+        y_out = runner.run_stream(x_full, chunk_size_s)
+        return y_out
 
     def process_step(self, backing_audio: Any) -> Any:
         """
-        Orchestrates a single step of the pipeline.
+        Orchestrates a single discrete step of the pipeline.
         
         Args:
             backing_audio: Input backing context.
             
         Returns:
-            Rendered solo audio.
+            Rendered solo audio chunk.
         """
         situation = self.summarize_situation(backing_audio)
-        intent = self.plan_intent(situation)
-        audio = self.render_audio(intent)
+        # Assumes step is short enough that intent dur equals audio len
+        duration_s = float(len(backing_audio)) / self.cfg.canonical_sample_rate
+        intent = self.plan_intent(situation, duration_s)
+        audio = self.render_audio(backing_audio, intent, situation)
         return audio
