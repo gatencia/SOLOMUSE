@@ -99,6 +99,10 @@ def main():
     infer_intent_parser = subparsers.add_parser("infer-intent", parents=[parent_parser], help="Run inference with Intent Planner")
     infer_intent_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing situation.npy")
 
+    renderer_parser = subparsers.add_parser("renderer-targets", parents=[parent_parser], help="Run Layer 3: Renderer Target Builder")
+    renderer_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    renderer_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+
     args = parser.parse_args()
 
     try:
@@ -162,6 +166,11 @@ def main():
         out_path = seg_dir / "intent_pred.npy"
         np.save(out_path, preds)
         logger.info(f"Saved inference prediction to {out_path} with shape {preds.shape}")
+    elif args.command == "renderer-targets":
+        from solomuse_model.renderer.run import run_renderer_target_build
+        limit = getattr(args, "limit", None)
+        overwrite = getattr(args, "overwrite", False)
+        run_renderer_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
 
 def model_status(cfg: PipelineConfig):
     """

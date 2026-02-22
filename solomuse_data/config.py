@@ -71,6 +71,13 @@ class PipelineConfig(BaseModel):
     intent_val_split: float = 0.1
     intent_checkpoint_path: str | None = None
 
+    # --- Renderer Data (Layer 3) ---
+    renderer_enable: bool = True
+    renderer_representation: str = "wavechunk" 
+    renderer_frame_ms: float = 20.0
+    renderer_hop_ms: float = 10.0
+    renderer_target_version: str = "v1"
+
     @field_validator("canonical_sample_rate")
     @classmethod
     def validate_sample_rate(cls, v):
