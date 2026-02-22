@@ -84,6 +84,11 @@ def main():
     subparsers.add_parser("run-all", parents=[parent_parser], help="Run full pipeline")
     subparsers.add_parser("list-tracks", parents=[parent_parser], help="List tracks in dataset")
     subparsers.add_parser("generate-weak", parents=[parent_parser], help="Generate weak pairs using Demucs (requires 'weak_inputs' folder)")
+    subparsers.add_parser("model-status", parents=[parent_parser], help="Print 3-layer architecture status")
+    
+    situation_parser = subparsers.add_parser("situation", parents=[parent_parser], help="Run Layer 1: Situation Extraction")
+    situation_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    situation_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
 
     args = parser.parse_args()
 
@@ -109,6 +114,42 @@ def main():
     elif args.command == "generate-weak":
         from solomuse_data.weak_separation import generate_weak_data
         generate_weak_data(cfg)
+    elif args.command == "model-status":
+        model_status(cfg)
+    elif args.command == "situation":
+        from solomuse_model.situation.run import run_situation_extraction
+        # We need a --limit and --overwrite if we want to exposed them
+        # Let's check if they are in args
+        limit = getattr(args, "limit", None)
+        overwrite = getattr(args, "overwrite", False)
+        run_situation_extraction(cfg, args.dataset, limit=limit, overwrite=overwrite)
+
+def model_status(cfg: PipelineConfig):
+    """
+    Print the status of the 3-layer architecture and configuration.
+    """
+    print("\n" + "="*50)
+    print("SOLOMUSE 3-LAYER ARCHITECTURE STATUS")
+    print("="*50)
+    print(f"Enabled:          {cfg.model_enable}")
+    print(f"Situation Model:  {cfg.situation_model_version}")
+    print(f"Intent Model:     {cfg.intent_model_version}")
+    print(f"Renderer Model:   {cfg.renderer_model_version}")
+    print("-" * 50)
+    print("Real-time Settings:")
+    print(f"  Chunk Size:     {cfg.live_chunk_ms} ms")
+    print(f"  Hop Size:       {cfg.live_hop_ms} ms")
+    print("-" * 50)
+    print("Wiring Status:")
+    
+    try:
+        from solomuse_model.pipeline import SoloMusePipeline
+        pipeline = SoloMusePipeline(cfg)
+        print("  [x] solomuse_model.pipeline.SoloMusePipeline: WIRED")
+    except ImportError as e:
+        print(f"  [ ] solomuse_model.pipeline: MISSING ({e})")
+    
+    print("="*50 + "\n")
 
 if __name__ == "__main__":
     main()

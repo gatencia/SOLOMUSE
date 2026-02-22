@@ -29,6 +29,30 @@ class PipelineConfig(BaseModel):
     num_workers: int = 4
     strict: bool = True
 
+    # --- 3-Layer Model Configuration ---
+    model_enable: bool = True
+    situation_model_version: str = "v1"
+    intent_model_version: str = "v1"
+    renderer_model_version: str = "v1"
+    
+    # Real-time / Live performance settings
+    live_chunk_ms: int = 250
+    live_hop_ms: int = 125
+    
+    # Refresh rates (Hz)
+    state_hz: int = 20
+    intent_hz: int = 10
+    codec_frame_hz: int = 50
+
+    # --- Situation Extraction (Layer 1) ---
+    situation_enable: bool = True
+    situation_use_x_only: bool = True
+    situation_frame_hz: int = 100
+    situation_chroma_hz: int = 10
+    situation_include_curves: bool = False
+    situation_save_npy: bool = True
+    situation_feature_version: str = "v1"
+
     @field_validator("canonical_sample_rate")
     @classmethod
     def validate_sample_rate(cls, v):

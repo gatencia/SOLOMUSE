@@ -104,6 +104,7 @@ Chops the pairs into fixed-length training windows (e.g., 6s).
 solomuse-data segment --config config.yaml --dataset slakh
 solomuse-data segment --config config.yaml --dataset musdb
 ```
+temp
 Outputs: `data/processed/segments/{dataset}/...` and the final manifest `data/processed/segments/{dataset}/manifest.csv`.
 
 ## 4. Final Dataset
