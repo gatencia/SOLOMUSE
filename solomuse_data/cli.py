@@ -186,6 +186,7 @@ def main():
     elif args.command == "render-segment":
         from solomuse_data.io import read_audio
         import soundfile as sf
+        import numpy as np
         from pathlib import Path
         
         seg_dir = Path(getattr(args, "segment_dir"))
