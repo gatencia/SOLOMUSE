@@ -52,14 +52,16 @@ def run_intent_target_build(cfg: PipelineConfig, dataset: str, limit: Optional[i
     # 3. Iterate segments
     for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Intent {dataset}"):
         segment_id = row.get("segment_id", "unknown")
-        x_path = row.get("x_path_abs")
-        y_path = row.get("y_path_abs")
+        # Reconstruct paths dynamically from manifest location
+        track_id = str(row.get("track_id", ""))
+        seg_dir = manifest_path.parent / track_id / segment_id
+        x_path = seg_dir / "x.wav"
+        y_path = seg_dir / "y.wav"
         
-        if not x_path or not y_path:
-            logger.warning(f"Missing x_path_abs or y_path_abs for segment {segment_id}")
+        if not x_path.exists() or not y_path.exists():
+            logger.warning(f"Missing x.wav or y.wav for segment {segment_id} at {seg_dir}")
             continue
             
-        seg_dir = Path(x_path).parent
         intent_file = seg_dir / "intent_targets.npy"
         
         if intent_file.exists() and not overwrite:

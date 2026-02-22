@@ -6,6 +6,7 @@ from typing import Optional
 
 from solomuse_model.intent.model_v1 import IntentPlannerGRU_V1
 from solomuse_data.config import PipelineConfig
+from solomuse_model.paths import get_intent_checkpoint_path
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +26,24 @@ class IntentInferencer:
         self.model.eval()
         self.ready = False
         
-        path_to_load = checkpoint_path or cfg.intent_checkpoint_path
+        path_to_load = get_intent_checkpoint_path(cfg)
+        logger.info(f"Inferencer attempting to load checkpoint from: {path_to_load}")
         
         if path_to_load and Path(path_to_load).exists():
             try:
                 checkpoint = torch.load(path_to_load, map_location=self.device)
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 self.ready = True
-                logger.info(f"Successfully loaded intent planner weights from {path_to_load}")
+                logger.info(f"Successfully loaded intent planner weights.")
             except Exception as e:
                 logger.error(f"Failed to load checkpoint {path_to_load}: {e}")
+                raise
         else:
-            logger.warning(f"No checkpoint found at provided path. Model has uninitialized weights.")
-            # Uninitialized weights can be useful for debugging shapes, 
-            # but we shouldn't mark it 'ready' for production.
-            self.ready = True
+            raise FileNotFoundError(
+                f"No checkpoint found at provided path: {path_to_load}. "
+                f"Model cannot run inference without trained weights. "
+                f"Please run `python -m solomuse_data.cli train-intent` first."
+            )
 
     def predict_sequence(self, situation_vector: np.ndarray, num_frames: int) -> np.ndarray:
         """

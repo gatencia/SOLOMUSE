@@ -53,14 +53,15 @@ def run_situation_extraction(cfg: PipelineConfig, dataset: str, limit: Optional[
     # 3. Iterate segments
     for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Situation {dataset}"):
         segment_id = row.get("segment_id", "unknown")
-        # x_path_abs is typically reliable
-        x_path = row.get("x_path_abs")
+        # Reconstruct path dynamically from manifest location
+        track_id = str(row.get("track_id", ""))
+        seg_dir = manifest_path.parent / track_id / segment_id
+        x_path = seg_dir / "x.wav"
         
-        if not x_path:
-            logger.warning(f"Missing x_path_abs for segment {segment_id}")
+        if not x_path.exists():
+            logger.warning(f"Missing x.wav for segment {segment_id} at {seg_dir}")
             continue
             
-        seg_dir = Path(x_path).parent
         situation_file = seg_dir / "situation.npy"
         
         if situation_file.exists() and not overwrite:

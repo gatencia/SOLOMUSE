@@ -8,6 +8,7 @@ from solomuse_data.config import PipelineConfig
 from solomuse_model.intent.dataset import IntentDataset
 from solomuse_model.intent.model_v1 import IntentPlannerGRU_V1
 from solomuse_model.intent.metrics import compute_intent_metrics
+from solomuse_model.paths import get_intent_checkpoint_path
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -43,16 +44,27 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
         return
 
     if len(train_ds) == 0:
-        logger.warning("Empty training dataset. Aborting.")
-        return
+        raise RuntimeError(f"Empty training dataset for {dataset_name}. No valid segments found.")
         
     # We use a custom collate to handle variable sequence lengths if they exist, 
     # but currently segments are fixed window (e.g. 6s), so they should all be F frames.
     # Just in case, PyTorch DataLoader defaults should work if F is constant.
     # Otherwise, pad_sequence is needed. Assuming F is constant for now based on V1 design.
     
-    train_loader = DataLoader(train_ds, batch_size=cfg.intent_batch_size, shuffle=True, drop_last=True)
+    train_loader = DataLoader(train_ds, batch_size=cfg.intent_batch_size, shuffle=True, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=cfg.intent_batch_size, shuffle=False)
+
+    num_train_batches = len(train_loader)
+    num_val_batches = len(val_loader)
+    
+    logger.info(f"Training setup:")
+    logger.info(f"  - Manifest: {manifest_path}")
+    logger.info(f"  - Train items: {len(train_ds)} ({num_train_batches} batches)")
+    logger.info(f"  - Val items: {len(val_ds)} ({num_val_batches} batches)")
+    logger.info(f"  - Batch size: {cfg.intent_batch_size}")
+    
+    if num_train_batches == 0:
+        raise RuntimeError(f"Dataset loaded 0 batches. Adjust config `intent_batch_size` or supply more data.")
 
     # 3. Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
@@ -75,9 +87,11 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     
     # 4. Training Loop
     best_val_loss = float('inf')
-    ckpt_dir = Path(cfg.output_root) / "models" / "intent_v1"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    best_ckpt_path = ckpt_dir / "best.pt"
+    best_ckpt_path = get_intent_checkpoint_path(cfg)
+    best_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"  - Checkpoint save path: {best_ckpt_path}")
+    
+    training_steps_executed = 0
     
     for epoch in range(cfg.intent_epochs):
         model.train()
@@ -97,9 +111,14 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
             # Optional gradient clip
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             
+            
             optimizer.step()
             train_loss += loss.item() * X.size(0)
+            training_steps_executed += 1
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            
+        if training_steps_executed == 0:
+            raise RuntimeError(f"Epoch {epoch+1} completed with 0 optimization steps (zero batches)! Check dataloader setup.")
             
         train_loss /= len(train_ds)
         
