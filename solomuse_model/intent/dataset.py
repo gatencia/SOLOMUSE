@@ -97,6 +97,7 @@ def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
     If not, it deterministically partitions manifest_intent.csv.
     """
     from torch.utils.data import DataLoader
+    from solomuse_model.utils.splits import create_track_grouped_splits
     
     targets_dir = Path(cfg.output_root) / "segments" / dataset_name
     manifest_path = targets_dir / "manifest_intent.csv"
@@ -107,46 +108,23 @@ def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
         
     df = pd.read_csv(manifest_path)
     
-    # 1. Split Generation / Loading
-    if not split_manifest_path.exists():
-        logger.info("No split manifest found. Generating deterministic splits...")
+    force_regenerate = getattr(cfg, "force_regenerate_splits", False)
+    
+    # 1. Split Generation / Loading using track-grouped utility
+    try:
+        df = create_track_grouped_splits(manifest_path, split_manifest_path, cfg, force_regenerate)
+    except RuntimeError as repr_err:
+        logger.error(str(repr_err))
+        raise
         
-        # Shuffle deterministically
-        df = df.sample(frac=1, random_state=cfg.seed).reset_index(drop=True)
-        
-        n_total = len(df)
-        if n_total == 0:
-            raise ValueError("Manifest is empty. Cannot generate splits.")
-            
-        # Enforce at least 1 train sample
-        n_train = max(1, int(n_total * getattr(cfg, "intent_train_ratio", 0.8)))
-        n_val = int(n_total * getattr(cfg, "intent_val_ratio", 0.1))
-        
-        # The rest goes to test (could be 0)
-        n_test = n_total - n_train - n_val
-        if n_test < 0:
-            n_test = 0
-            n_val = n_total - n_train
-            n_train = max(1, n_total - n_val)
-            
-        splits = ["train"] * n_train + ["val"] * n_val + ["test"] * n_test
-        
-        # Pad differences if rounding errors
-        if len(splits) > n_total:
-            splits = splits[:n_total]
-        elif len(splits) < n_total:
-            splits += ["test"] * (n_total - len(splits))
-            
-        df["split"] = splits
-        
-        # Save so future runs (eval/infer) don't drift
-        df.to_csv(split_manifest_path, index=False)
-        logger.info(f"Saved persistent splits to {split_manifest_path}")
-    else:
-        logger.info(f"Loading persistent splits from {split_manifest_path}")
-        df = pd.read_csv(split_manifest_path)
-        if "split" not in df.columns:
-            raise ValueError(f"'split' column missing in {split_manifest_path}")
+    if "split" not in df.columns:
+        raise ValueError(f"'split' column missing after processing {split_manifest_path}")
+
+    # Explicit leakage assertion as requested by user
+    track_splits = df.groupby("track_id")["split"].nunique()
+    leaking_tracks = track_splits[track_splits > 1]
+    if not leaking_tracks.empty:
+        raise AssertionError(f"FATAL: Track leakage detected across splits. The following tracks appear in multiple sets: {leaking_tracks.index.tolist()}")
 
     # 2. Build Datasets
     train_df = df[df["split"] == "train"]
@@ -180,6 +158,9 @@ def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
         drop_last=False
     )
     
-    logger.info(f"Intent Datasets Built -> Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)}")
+    logger.info(f"Intent Datasets Built -> "
+                f"Train: {len(train_ds)} segs ({train_df['track_id'].nunique()} tracks) | "
+                f"Val: {len(val_ds)} segs ({val_df['track_id'].nunique()} tracks) | "
+                f"Test: {len(test_ds)} segs ({test_df['track_id'].nunique()} tracks)")
     
     return train_loader, val_loader, test_loader

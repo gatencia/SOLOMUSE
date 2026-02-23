@@ -21,25 +21,40 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     logger.info(f"Starting renderer training for {dataset_name}...")
     
     # 1. Manifest
-    manifest_candidates = [
-        Path(cfg.output_root) / "segments" / dataset_name / "manifest_renderer.csv",
-        Path(cfg.output_root) / "manifest_renderer.csv"
-    ]
+    from solomuse_model.utils.splits import create_track_grouped_splits
     
-    manifest_path = None
-    for p in manifest_candidates:
-        if p.exists():
-            manifest_path = p
-            break
+    segments_dir = Path(cfg.output_root) / "segments" / dataset_name
+    split_manifest_path = segments_dir / "manifest_intent_splits.csv"
+    
+    # Check if we need to generate splits first
+    if not split_manifest_path.exists() or getattr(cfg, "force_regenerate_splits", False):
+        logger.info("Shared track-grouped split manifest not found (or forced). Generating...")
+        
+        # Try finding a source manifest
+        source_candidates = [
+            segments_dir / "manifest_intent.csv",
+            segments_dir / "manifest_renderer.csv"
+        ]
+        source_manifest = next((p for p in source_candidates if p.exists()), None)
+        
+        if not source_manifest:
+            logger.error(f"Cannot find source intent or renderer manifest to build splits for {dataset_name}")
+            return
             
-    if not manifest_path:
-        logger.error(f"Intent/Renderer manifest not found for {dataset_name}")
+        try:
+            create_track_grouped_splits(source_manifest, split_manifest_path, cfg, force_regenerate=True)
+        except RuntimeError as e:
+            logger.error(str(e))
+            return
+            
+    if not split_manifest_path.exists():
+        logger.error(f"Split manifest not found for {dataset_name} at {split_manifest_path}")
         return
 
     # 2. Datasets
     try:
-        train_ds = RendererDataset(manifest_path, split="train", val_ratio=0.1)
-        val_ds = RendererDataset(manifest_path, split="val", val_ratio=0.1)
+        train_ds = RendererDataset(str(split_manifest_path), split="train", val_ratio=getattr(cfg, "intent_val_ratio", 0.1))
+        val_ds = RendererDataset(str(split_manifest_path), split="val", val_ratio=getattr(cfg, "intent_val_ratio", 0.1))
     except Exception as e:
         logger.error(f"Failed to load Renderer datasets: {e}")
         return

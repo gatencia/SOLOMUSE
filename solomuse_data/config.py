@@ -64,6 +64,7 @@ class PipelineConfig(BaseModel):
     intent_train_ratio: float = 0.8
     intent_val_ratio: float = 0.1
     intent_test_ratio: float = 0.1
+    force_regenerate_splits: bool = False
 
     # --- Baseline Intent Planner (Training/Inference) ---
     intent_model_type: str = "gru"

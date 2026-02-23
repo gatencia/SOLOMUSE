@@ -96,6 +96,7 @@ def main():
     
     train_intent_parser = subparsers.add_parser("train-intent", parents=[parent_parser], help="Train Layer 2: Baseline Intent Planner")
     train_intent_parser.add_argument("--wandb", action="store_true", help="Enable W&B for this run")
+    train_intent_parser.add_argument("--force-regenerate-splits", action="store_true", help="Force rebuild of persistent splits mapping instead of using existing one.")
 
     eval_intent_parser = subparsers.add_parser("eval-intent", parents=[parent_parser], help="Evaluate Layer 2: Baseline Intent Planner")
     eval_intent_parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train, val, test, all)")
@@ -111,6 +112,7 @@ def main():
     renderer_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
 
     train_ren_parser = subparsers.add_parser("train-renderer", parents=[parent_parser], help="Train Layer 3: Baseline Renderer")
+    train_ren_parser.add_argument("--force-regenerate-splits", action="store_true", help="Force rebuild of persistent splits mapping instead of using existing one.")
     
     render_seg_parser = subparsers.add_parser("render-segment", parents=[parent_parser], help="Render offline segment")
     render_seg_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment")
@@ -118,7 +120,16 @@ def main():
     live_sim_parser = subparsers.add_parser("live-sim", parents=[parent_parser], help="Run streaming live simulation")
     live_sim_parser.add_argument("--wav", type=str, required=True, help="Input backing track path")
     live_sim_parser.add_argument("--out", type=str, required=True, help="Output solo audio path")
-
+    live_sim_parser.add_argument("--wandb", action="store_true", help="Enable W&B tracking explicitly for this run")
+    live_sim_parser.add_argument("--run-name", type=str, help="Custom W&B run name override")
+    
+    # Artifact inspection arguments
+    inspect_artifacts_parser = subparsers.add_parser("inspect-artifacts", parents=[parent_parser], help="Inspect generated artifacts (e.g., segments, situations, intents)")
+    inspect_artifacts_parser.add_argument("--action", type=str, choices=["sample", "stats", "splits", "decode"], required=True, help="Action for inspect-artifacts command.")
+    inspect_artifacts_parser.add_argument("--sample-size", type=int, default=10, help="Number of items to sample in inspection commands.")
+    inspect_artifacts_parser.add_argument("--json-report", type=str, nargs="?", const="auto", help="Path to optionally dump json inspection report. Pass flag without value for auto-path.")
+    inspect_artifacts_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    
     args = parser.parse_args()
 
     try:
@@ -160,6 +171,8 @@ def main():
     elif args.command == "train-intent":
         if getattr(args, "wandb", False):
             cfg.wandb_enabled = True
+        if getattr(args, "force_regenerate_splits", False):
+            cfg.force_regenerate_splits = True
         from solomuse_model.intent.train import run_train_intent
         run_train_intent(cfg, args.dataset)
     elif args.command == "eval-intent":
@@ -170,6 +183,23 @@ def main():
     elif args.command == "inspect-intent-crashes":
         from solomuse_model.intent.inspect import inspect_intent_crashes
         inspect_intent_crashes(cfg, args.dataset)
+    elif args.command == "inspect-artifacts":
+        from solomuse_data.inspect_artifacts import inspect_artifacts
+        
+        limit = getattr(args, "limit", None)
+        action = getattr(args, "action")
+        if not action:
+            logger.error("--action must be specified for inspect-artifacts")
+            return
+            
+        inspect_artifacts(
+            cfg=cfg, 
+            dataset_name=args.dataset, 
+            action=action, 
+            sample_size=args.sample_size, 
+            limit=limit, 
+            json_report=args.json_report
+        )
     elif args.command == "infer-intent":
         from solomuse_model.intent.infer import IntentInferencer
         import numpy as np
@@ -198,6 +228,8 @@ def main():
         overwrite = getattr(args, "overwrite", False)
         run_renderer_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
     elif args.command == "train-renderer":
+        if getattr(args, "force_regenerate_splits", False):
+            cfg.force_regenerate_splits = True
         from solomuse_model.renderer.train import run_train_renderer
         run_train_renderer(cfg, args.dataset)
     elif args.command == "render-segment":

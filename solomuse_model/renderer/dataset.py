@@ -26,11 +26,13 @@ class RendererDataset(Dataset):
             self.rows = []
             return
             
-        def get_split(track_id):
-            h = int(hashlib.md5(str(track_id).encode()).hexdigest(), 16)
-            return "val" if (h % 100) < (val_ratio * 100) else "train"
+        if "split" not in df.columns:
+            logger.warning(f"Manifest {manifest_path} lacks a 'split' column. Falling back to simple track hashing.")
+            def get_split(track_id):
+                h = int(hashlib.md5(str(track_id).encode()).hexdigest(), 16)
+                return "val" if (h % 100) < (val_ratio * 100) else "train"
+            df["split"] = df["track_id"].apply(get_split)
             
-        df["split"] = df["track_id"].apply(get_split)
         self.rows = df[df["split"] == split].to_dict('records')
         logger.info(f"Loaded {len(self.rows)} items for {split} split")
 
