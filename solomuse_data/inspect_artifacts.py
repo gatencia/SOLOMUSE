@@ -167,58 +167,78 @@ class ArtifactInspector:
     def run_splits(self, json_report: Optional[str] = None):
         """Action: splits. Check dataset leakage."""
         logger.info("--- Split Integrity Check ---")
-        split_file = self.segment_root / "manifest_intent_splits.csv"
         
-        if not split_file.exists():
-            logger.error(f"Split file missing: {split_file}")
+        candidates = [
+            self.segment_root / "manifest_intent_splits.csv",
+            self.segment_root / "manifest_renderer_splits.csv"
+        ]
+        
+        found = False
+        all_reports = {}
+        
+        for split_file in candidates:
+            if not split_file.exists():
+                continue
+                
+            found = True
+            logger.info(f"\nChecking Splits exactly at: {split_file.name}")
+                
+            splits = {"train": set(), "val": set(), "test": set()}
+            tracks = {"train": set(), "val": set(), "test": set()}
+            
+            with open(split_file, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    sp = row.get("split")
+                    sid = row.get("segment_id")
+                    tid = row.get("track_id")
+                    if sp in splits:
+                        splits[sp].add(sid)
+                        tracks[sp].add(tid)
+                        
+            # Tally
+            train_len, val_len, test_len = len(splits["train"]), len(splits["val"]), len(splits["test"])
+            print(f"  Split Sizes -> Train: {train_len}, Val: {val_len}, Test: {test_len}")
+            
+            # Segment Leakage
+            leakage_val = splits["train"].intersection(splits["val"])
+            leakage_test = splits["train"].intersection(splits["test"])
+            
+            # Track Leakage
+            t_leakage_val = tracks["train"].intersection(tracks["val"])
+            t_leakage_test = tracks["train"].intersection(tracks["test"])
+            
+            print("  Segment Leakage (Exact Match):")
+            if leakage_val or leakage_test:
+                logger.error(f"    Train/Val Segment Overlaps: {len(leakage_val)}")
+                logger.error(f"    Train/Test Segment Overlaps: {len(leakage_test)}")
+            else:
+                print("    ✅ ZERO Segment ID Leakage across train/val/test.")
+                
+            print("  Track Leakage (Song-Level Evaluation Check):")
+            has_track_leak = False
+            if t_leakage_val or t_leakage_test:
+                has_track_leak = True
+                logger.error(f"    Train/Val Track Overlaps: {len(t_leakage_val)} {list(t_leakage_val)[:5]}")
+                logger.error(f"    Train/Test Track Overlaps: {len(t_leakage_test)} {list(t_leakage_test)[:5]}")
+                logger.error("    FATAL: Data leakage detected at the song level. Validation metrics are compromised.")
+            else:
+                print("    ✅ ZERO Track ID Leakage. Validation and Test sets are rigorously held-out.")
+                
+            if has_track_leak:
+                raise AssertionError(f"FATAL: ALGORITHMIC TRACK LEAKAGE in {split_file.name}!")
+                
+            all_reports[split_file.name] = {
+                "counts": {"train": train_len, "val": val_len, "test": test_len},
+                "segment_leakage": {"train_val": list(leakage_val), "train_test": list(leakage_test)},
+                "track_leakage": {"train_val": list(t_leakage_val), "train_test": list(t_leakage_test)}
+            }
+            
+        if not found:
+            logger.error("No splits files found. Generate them via target builders.")
             return
             
-        splits = {"train": set(), "val": set(), "test": set()}
-        tracks = {"train": set(), "val": set(), "test": set()}
-        
-        with open(split_file, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                sp = row.get("split")
-                sid = row.get("segment_id")
-                tid = row.get("track_id")
-                if sp in splits:
-                    splits[sp].add(sid)
-                    tracks[sp].add(tid)
-                    
-        # Tally
-        train_len, val_len, test_len = len(splits["train"]), len(splits["val"]), len(splits["test"])
-        print(f"\nSplit Sizes -> Train: {train_len}, Val: {val_len}, Test: {test_len}")
-        
-        # Segment Leakage
-        leakage_val = splits["train"].intersection(splits["val"])
-        leakage_test = splits["train"].intersection(splits["test"])
-        
-        # Track Leakage
-        t_leakage_val = tracks["train"].intersection(tracks["val"])
-        t_leakage_test = tracks["train"].intersection(tracks["test"])
-        
-        print("\nSegment Leakage (Exact Match):")
-        if leakage_val or leakage_test:
-            logger.error(f"  Train/Val Segment Overlaps: {len(leakage_val)}")
-            logger.error(f"  Train/Test Segment Overlaps: {len(leakage_test)}")
-        else:
-            print("  ✅ ZERO Segment ID Leakage across train/val/test.")
-            
-        print("\nTrack Leakage (Song-Level Evaluation Check):")
-        if t_leakage_val or t_leakage_test:
-            logger.error(f"  Train/Val Track Overlaps: {len(t_leakage_val)} {list(t_leakage_val)[:5]}")
-            logger.error(f"  Train/Test Track Overlaps: {len(t_leakage_test)} {list(t_leakage_test)[:5]}")
-            logger.error("  FATAL: Data leakage detected at the song level. Validation metrics are compromised.")
-        else:
-            print("  ✅ ZERO Track ID Leakage. Validation and Test sets are rigorously held-out.")
-            
-        report = {
-            "counts": {"train": train_len, "val": val_len, "test": test_len},
-            "segment_leakage": {"train_val": list(leakage_val), "train_test": list(leakage_test)},
-            "track_leakage": {"train_val": list(t_leakage_val), "train_test": list(t_leakage_test)}
-        }
-        self._maybe_dump_json(report, json_report, "splits_report")
+        self._maybe_dump_json(all_reports, json_report, "splits_report")
 
     def run_decode(self, sample_size: int = 5):
         """Action: decode. Uses Codec to rebuild audio and verify shapes are musical."""
@@ -235,8 +255,15 @@ class ArtifactInspector:
         import subprocess
         subprocess.run(f"mkdir -p {out_dir}", shell=True)
         
-        codec = WaveChunkCodec(frame_ms=self.cfg.renderer_frame_ms, hop_ms=self.cfg.renderer_hop_ms, target_sr=self.cfg.canonical_sample_rate)
-        
+        if self.cfg.renderer_representation == "wavechunk":
+            codec = WaveChunkCodec(frame_ms=self.cfg.renderer_frame_ms, hop_ms=self.cfg.renderer_hop_ms, target_sr=self.cfg.canonical_sample_rate)
+        elif self.cfg.renderer_representation == "encodec":
+            from solomuse_model.renderer.encodec_adapter import EnCodecAdapter
+            codec = EnCodecAdapter()
+        else:
+            logger.error(f"Unsupported codec representation: {self.cfg.renderer_representation}")
+            return
+            
         successes = []
         for seg in sampled:
             target_path = seg / "renderer_target.npy"

@@ -2,6 +2,7 @@ output_root: "./data/processed"
 
 dataset_roots:
   slakh: "./data/raw/babyslakh_16k"
+  mock: "./data/raw/mock"
   # musdb: "/path/to/musdb18" # Uncomment if you download MUSDB
   # weak_songs: "/path/to/weak_mp3s"
 
@@ -19,3 +20,5 @@ intent_max_bad_batches_per_epoch: 100
 
 enable_weak_demucs: false
 demucs_model: "htdemucs"
+renderer_representation: "encodec"
+renderer_token_cache: true

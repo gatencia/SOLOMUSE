@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from solomuse_model.intent.model_v1 import IntentPlannerGRU_V1
+from solomuse_model.intent.model_v2 import IntentPlannerTransformer_V2
 from solomuse_data.config import PipelineConfig
 from solomuse_model.paths import get_intent_checkpoint_path
 
@@ -14,15 +15,33 @@ class IntentInferencer:
     """Wrapper for handling sequence prediction using trained models."""
     def __init__(self, cfg: PipelineConfig, checkpoint_path: Optional[str] = None):
         self.cfg = cfg
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+        device_str = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+        if getattr(cfg, "intent_force_cpu_debug", False):
+            device_str = 'cpu'
+            logger.info("intent_force_cpu_debug is enabled. Overriding inference device to CPU.")
+            
+        self.device = torch.device(device_str)
         
-        self.model = IntentPlannerGRU_V1(
-            input_dim=32,
-            hidden_dim=cfg.intent_hidden_dim,
-            num_layers=cfg.intent_num_layers,
-            output_dim=7,
-            dropout=0.0 # No dropout for eval
-        ).to(self.device)
+        if cfg.intent_model_type.lower() == "gru":
+            self.model = IntentPlannerGRU_V1(
+                input_dim=32,
+                hidden_dim=cfg.intent_hidden_dim,
+                num_layers=cfg.intent_num_layers,
+                output_dim=7,
+                dropout=0.0 # No dropout for eval
+            ).to(self.device)
+        elif cfg.intent_model_type.lower() == "transformer":
+            self.model = IntentPlannerTransformer_V2(
+                input_dim=32,
+                hidden_dim=cfg.intent_hidden_dim,
+                num_layers=cfg.intent_num_layers,
+                nhead=8,
+                output_dim=7,
+                dropout=0.0
+            ).to(self.device)
+        else:
+            raise ValueError(f"Unsupported intent_model_type: {cfg.intent_model_type}")
+            
         self.model.eval()
         self.ready = False
         

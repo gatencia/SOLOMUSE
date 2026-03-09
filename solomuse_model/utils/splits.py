@@ -26,14 +26,24 @@ def create_track_grouped_splits(manifest_path: str | Path,
     manifest_path = Path(manifest_path)
     split_manifest_path = Path(split_manifest_path)
     
-    if not manifest_path.exists():
+    try:
+        with open(manifest_path, 'r'):
+            pass
+    except FileNotFoundError:
         raise FileNotFoundError(f"Source manifest not found at {manifest_path}")
         
     df = pd.read_csv(manifest_path)
     if "track_id" not in df.columns or "segment_id" not in df.columns:
         raise ValueError(f"Manifest at {manifest_path} must contain 'track_id' and 'segment_id' columns.")
 
-    if split_manifest_path.exists() and not force_regenerate:
+    split_exists = False
+    try:
+        with open(split_manifest_path, 'r'):
+            split_exists = True
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    if split_exists and not force_regenerate:
         logger.info(f"Loading existing persistent splits from {split_manifest_path}")
         split_df = pd.read_csv(split_manifest_path)
         
@@ -88,7 +98,15 @@ def create_track_grouped_splits(manifest_path: str | Path,
     
     # Save the deterministic output
     df.to_csv(split_manifest_path, index=False)
+    
+    # Final Explicit Assertion: Double check no tracks cross-pollinate
+    track_splits = df.groupby("track_id")["split"].nunique()
+    leaking_tracks = track_splits[track_splits > 1]
+    if not leaking_tracks.empty:
+        raise AssertionError(f"FATAL ALGORITHMIC ERROR: Track leakage detected exactly after generation! Leaking tracks: {leaking_tracks.index.tolist()}")
+        
     logger.info(f"Saved persistent tracking splits to {split_manifest_path}")
     logger.info(f"Track counts -> Train: {n_train} | Val: {n_val} | Test: {n_test}")
+    logger.info(f"Segment counts -> Train: {len(df[df['split']=='train'])} | Val: {len(df[df['split']=='val'])} | Test: {len(df[df['split']=='test'])}")
     
     return df

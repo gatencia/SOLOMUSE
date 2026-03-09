@@ -1,5 +1,9 @@
 import logging
-from typing import Any
+import time
+import torch
+import numpy as np
+from typing import Any, Dict, Optional
+from pathlib import Path
 from solomuse_data.config import PipelineConfig
 
 logger = logging.getLogger(__name__)
@@ -22,98 +26,148 @@ class SoloMusePipeline:
                     f"Intent={cfg.intent_model_version}, "
                     f"Renderer={cfg.renderer_model_version}")
 
-    def summarize_situation(self, backing_audio: Any) -> Any:
+    def summarize_situation(self, backing_audio: np.ndarray) -> np.ndarray:
         """
         Summarize the musical situation from backing audio.
         """
-        return self.compute_situation(backing_audio)
+        start_time = time.perf_counter()
+        vector = self.compute_situation(backing_audio)
+        latency = (time.perf_counter() - start_time) * 1000
+        logger.info(f" [Latency] Layer 1 (Situation): {latency:.2f}ms")
+        
+        assert vector.shape == (32,), f"Situation vector shape mismatch: expected (32,), got {vector.shape}"
+        return vector
 
-    def compute_situation(self, audio: Any) -> Any:
+    def compute_situation(self, audio: np.ndarray) -> np.ndarray:
         """
         Compute situation features and vector for raw audio.
         """
         from solomuse_model.situation.extract import extract_situation_v1
         from solomuse_model.situation.vectorize import vectorize_situation_v1
         
-        # Ensure we have a sample rate from config
         sr = self.cfg.canonical_sample_rate
+        # Ensure audio is float32
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+            
         features = extract_situation_v1(audio, sr, self.cfg)
         vector = vectorize_situation_v1(features)
         return vector
 
-    def load_situation(self, situation_path: str) -> Any:
-        """
-        Load a precomputed situation vector.
-        """
-        import numpy as np
-        return np.load(situation_path)
-
-    def plan_intent(self, situation_summary: Any, duration_s: float) -> Any:
+    def plan_intent(self, situation_summary: np.ndarray, duration_s: float) -> np.ndarray:
         """
         Plan the musical intent based on the situation summary.
-        If a checkpoint is configured, runs inference using the baseline planner.
         
         Args:
             situation_summary: Vector from compute_situation [32].
             duration_s: Expected duration in seconds to derive frame count.
         """
+        start_time = time.perf_counter()
+        num_frames = int(duration_s * self.cfg.intent_hz)
+        
         if self.cfg.intent_checkpoint_path:
-            logger.info(f"Planning intent using model from {self.cfg.intent_checkpoint_path}")
+            logger.info(f"Planning intent using {self.cfg.intent_model_type} model from {self.cfg.intent_checkpoint_path}")
             from solomuse_model.intent.infer import IntentInferencer
             inferencer = IntentInferencer(self.cfg, self.cfg.intent_checkpoint_path)
-            num_frames = int(duration_s * self.cfg.intent_hz)
-            return inferencer.predict_sequence(situation_summary, num_frames)
+            intent = inferencer.predict_sequence(situation_summary, num_frames)
         else:
             logger.info("No intent model checkpoint found. Returning zero intent array.")
-            import numpy as np
-            num_frames = int(duration_s * self.cfg.intent_hz)
-            return np.zeros((num_frames, 7), dtype=np.float32)
+            intent = np.zeros((num_frames, 7), dtype=np.float32)
+            
+        latency = (time.perf_counter() - start_time) * 1000
+        logger.info(f" [Latency] Layer 2 (Intent): {latency:.2f}ms")
         
-    def compute_intent_targets(self, x_audio: Any, y_audio: Any, situation_features: Any = None) -> Any:
-        """
-        Compute intent target vectors from backing and solo audio.
-        """
-        from solomuse_model.intent.extract_targets import extract_intent_targets_v1
-        from solomuse_model.intent.vectorize import vectorize_intent_v1
-        
-        sr = self.cfg.canonical_sample_rate
-        seq = extract_intent_targets_v1(x_audio, y_audio, sr, situation_features, self.cfg)
-        return vectorize_intent_v1(seq)
-        
-    def load_intent_targets(self, intent_path: str) -> Any:
-        """
-        Load precomputed intent target matrix.
-        """
-        import numpy as np
-        return np.load(intent_path)
+        assert intent.shape == (num_frames, 7), f"Intent shape mismatch: expected ({num_frames}, 7), got {intent.shape}"
+        return intent
 
-    def render_audio(self, x_audio: Any, intent_plan: Any, situation_summary: Any = None) -> Any:
+    def render_audio(self, x_audio: np.ndarray, intent_plan: np.ndarray, situation_summary: np.ndarray = None) -> Dict[str, Any]:
         """
         Produce solo audio given backing context and an intent plan.
         
-        Args:
-            x_audio: Input backing context array.
-            intent_plan: Intent [F, 7].
-            situation_summary: Optional situation array [32].
-            
         Returns:
-            y_hat_audio: [T] array
+            Dict containing 'y_hat' (audio) and optional 'y_tokens' (if V2).
         """
-        logger.debug("Rendering audio...")
+        start_time = time.perf_counter()
+        
         if not self.cfg.renderer_enable:
             logger.warning("Renderer disabled. Returning silence.")
-            import numpy as np
-            return np.zeros_like(x_audio)
+            return {"y_hat": np.zeros_like(x_audio)}
             
-        from solomuse_model.renderer.infer import render_segment
         if situation_summary is None:
-            import numpy as np
             situation_summary = np.zeros(32, dtype=np.float32)
             
-        y_hat = render_segment(x_audio, intent_plan, situation_summary, self.cfg, self.cfg.renderer_checkpoint_path)
-        return y_hat
+        outputs = {}
+        
+        if self.cfg.renderer_model_type == "token_transformer":
+            from solomuse_model.renderer.infer_v2 import TokenRendererSimulator
+            from solomuse_model.renderer.encodec_adapter import EnCodecAdapter
+            from solomuse_model.renderer.alignment import upsample_intent_to_tokens
+            from solomuse_model.paths import get_renderer_checkpoint_path
+            
+            ckpt_path = get_renderer_checkpoint_path(self.cfg)
+            sim = TokenRendererSimulator(self.cfg, ckpt_path)
+            adapter = EnCodecAdapter()
+            
+            # 1. Get X Tokens
+            x_tokens = adapter.encode(x_audio, self.cfg.canonical_sample_rate)
+            
+            # 2. Align Intent
+            # EnCodec tokens are strictly 75Hz
+            intent_aligned = upsample_intent_to_tokens(intent_plan, self.cfg.intent_hz, 75.0, x_tokens.shape[0])
+            
+            # 3. Generate
+            y_tokens, y_hat = sim.generate(x_tokens, intent_aligned, situation_summary)
+            outputs["y_hat"] = y_hat
+            outputs["y_tokens"] = y_tokens
+            
+        else: # conv1d / v1
+            from solomuse_model.renderer.infer import render_segment
+            y_hat = render_segment(x_audio, intent_plan, situation_summary, self.cfg, self.cfg.renderer_checkpoint_path)
+            outputs["y_hat"] = y_hat
+            
+        latency = (time.perf_counter() - start_time) * 1000
+        logger.info(f" [Latency] Layer 3 (Renderer): {latency:.2f}ms")
+        
+        return outputs
 
-    def run_live_simulation(self, x_full: Any, chunk_size_s: float = 1.0) -> Any:
+    def run_pipeline_infer(self, x_audio: np.ndarray, segment_id: str, output_dir: Optional[Path] = None):
+        """
+        Unified end-to-end inference for a single segment.
+        """
+        logger.info(f"=== Starting Unified Pipeline Inference for {segment_id} ===")
+        total_start = time.perf_counter()
+        
+        # 1. Situation
+        situation = self.summarize_situation(x_audio)
+        
+        # 2. Intent
+        duration_s = float(len(x_audio)) / self.cfg.canonical_sample_rate
+        intent = self.plan_intent(situation, duration_s)
+        
+        # 3. Renderer
+        render_results = self.render_audio(x_audio, intent, situation)
+        y_hat = render_results["y_hat"]
+        
+        total_latency = (time.perf_counter() - total_start) * 1000
+        logger.info(f"=== Pipeline Inference Complete (Total Latency: {total_latency:.2f}ms) ===")
+        
+        # 4. Save Artifacts
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            import soundfile as sf
+            sf.write(output_dir / "y_hat.wav", y_hat, self.cfg.canonical_sample_rate)
+            np.save(output_dir / "intent_pred.npy", intent)
+            np.save(output_dir / "situation.npy", situation)
+            
+            if "y_tokens" in render_results:
+                np.save(output_dir / "y_hat_tokens.npy", render_results["y_tokens"])
+                
+            logger.info(f"Saved inference results to {output_dir}")
+            
+        return render_results
+
+    def run_live_simulation(self, x_full: np.ndarray, chunk_size_s: float = 1.0) -> np.ndarray:
         """
         Runs the full streaming overlap-add pipeline on a complete backing track.
         """

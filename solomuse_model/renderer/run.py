@@ -56,6 +56,9 @@ def run_renderer_target_build(cfg: PipelineConfig, dataset: str, limit: Optional
             hop_ms=cfg.renderer_hop_ms,
             target_sr=cfg.canonical_sample_rate
         )
+    elif cfg.renderer_representation == "encodec":
+        from solomuse_model.renderer.encodec_adapter import EnCodecAdapter
+        codec = EnCodecAdapter()
     else:
         logger.error(f"Unsupported codec representation: {cfg.renderer_representation}")
         return

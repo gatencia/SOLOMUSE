@@ -8,13 +8,14 @@ class AudioCodec(ABC):
     """
     
     @abstractmethod
-    def encode(self, audio: np.ndarray, sr: int) -> np.ndarray:
+    def encode(self, audio: np.ndarray, sr: int, cache_path: str | None = None) -> np.ndarray:
         """
         Encode an audio waveform into the codec representation.
         
         Args:
             audio: [T] or [T, C] float32 array
             sr: sample rate
+            cache_path: Optional path to save/load cached representation
             
         Returns:
             np.ndarray consisting of the encoded representation, typically [F, dims]
@@ -77,7 +78,13 @@ class WaveChunkCodec(AudioCodec):
         self.frame_size = int((frame_ms / 1000.0) * target_sr)
         self.hop_size = int((hop_ms / 1000.0) * target_sr)
         
-    def encode(self, audio: np.ndarray, sr: int) -> np.ndarray:
+    def encode(self, audio: np.ndarray, sr: int, cache_path: str | None = None) -> np.ndarray:
+        if cache_path is not None:
+            import os
+            if os.path.exists(cache_path):
+                # Naive cache load for baseline proxy
+                return np.load(cache_path)
+                
         if sr != self.target_sr:
             # Bypass librosa resample for tests to avoid the caching bug if sr matches, 
             # or use a simple numpy abstraction if not.
@@ -94,13 +101,17 @@ class WaveChunkCodec(AudioCodec):
         if num_frames <= 0:
             return np.zeros((1, self.frame_size), dtype=audio.dtype)
             
+        
         frames = np.lib.stride_tricks.as_strided(
             audio, 
             shape=(num_frames, self.frame_size),
             strides=(audio.strides[0] * self.hop_size, audio.strides[0])
-        )
+        ).copy()
         
-        return frames.copy()
+        if cache_path is not None:
+            np.save(cache_path, frames)
+            
+        return frames
         
     def decode(self, codes: np.ndarray, sr: int) -> np.ndarray:
         # Note: True overlap-add is needed for proper reconstruction with hop < frame

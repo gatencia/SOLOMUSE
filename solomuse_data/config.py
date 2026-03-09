@@ -99,6 +99,7 @@ class PipelineConfig(BaseModel):
     renderer_frame_ms: float = 20.0
     renderer_hop_ms: float = 10.0
     renderer_target_version: str = "v1"
+    renderer_token_cache: bool = True
     
     # --- Renderer Network (Training/Inference) ---
     renderer_model_type: str = "conv1d"
@@ -136,6 +137,46 @@ class PipelineConfig(BaseModel):
         if v != -18.0:
             raise ValueError("lufs_target must be -18.0")
         return v
+
+    @field_validator("intent_model_type")
+    @classmethod
+    def validate_intent_model(cls, v):
+        valid = {"gru", "transformer"}
+        if v.lower() not in valid:
+            raise ValueError(f"intent_model_type must be one of {valid}")
+        return v.lower()
+
+    @field_validator("renderer_model_type")
+    @classmethod
+    def validate_renderer_model(cls, v):
+        valid = {"conv1d", "token_transformer"}
+        if v.lower() not in valid:
+            raise ValueError(f"renderer_model_type must be one of {valid}")
+        return v.lower()
+
+    @field_validator("situation_model_version")
+    @classmethod
+    def validate_situation_version(cls, v):
+        valid = {"v1"}
+        if v.lower() not in valid:
+            raise ValueError(f"situation_model_version must be one of {valid}")
+        return v.lower()
+
+    @field_validator("intent_model_version")
+    @classmethod
+    def validate_intent_version(cls, v):
+        valid = {"v1"}
+        if v.lower() not in valid:
+            raise ValueError(f"intent_model_version must be one of {valid}")
+        return v.lower()
+
+    @field_validator("renderer_model_version")
+    @classmethod
+    def validate_renderer_version(cls, v):
+        valid = {"v1", "v2"}
+        if v.lower() not in valid:
+            raise ValueError(f"renderer_model_version must be one of {valid}")
+        return v.lower()
 
     @field_validator("canonical_channels")
     @classmethod # Typo correction: logic is correct but decorator target needs to exist. Wait, field is canonical_channels

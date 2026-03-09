@@ -24,7 +24,7 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     from solomuse_model.utils.splits import create_track_grouped_splits
     
     segments_dir = Path(cfg.output_root) / "segments" / dataset_name
-    split_manifest_path = segments_dir / "manifest_intent_splits.csv"
+    split_manifest_path = segments_dir / "manifest_renderer_splits.csv"
     
     # Check if we need to generate splits first
     if not split_manifest_path.exists() or getattr(cfg, "force_regenerate_splits", False):
@@ -53,8 +53,8 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
 
     # 2. Datasets
     try:
-        train_ds = RendererDataset(str(split_manifest_path), split="train", val_ratio=getattr(cfg, "intent_val_ratio", 0.1))
-        val_ds = RendererDataset(str(split_manifest_path), split="val", val_ratio=getattr(cfg, "intent_val_ratio", 0.1))
+        train_ds = RendererDataset(str(split_manifest_path), split="train")
+        val_ds = RendererDataset(str(split_manifest_path), split="val")
     except Exception as e:
         logger.error(f"Failed to load Renderer datasets: {e}")
         return
@@ -62,6 +62,18 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
     if len(train_ds) == 0:
         logger.warning("Empty training dataset. Aborting.")
         return
+        
+    # Read unique track ids for explicit logging
+    import pandas as pd
+    try:
+        df = pd.read_csv(split_manifest_path)
+        train_df = df[df["split"]=="train"]
+        val_df = df[df["split"]=="val"]
+        logger.info(f"Renderer Datasets Built -> "
+                    f"Train: {len(train_ds)} segs ({train_df['track_id'].nunique()} tracks) | "
+                    f"Val: {len(val_ds)} segs ({val_df['track_id'].nunique()} tracks)")
+    except Exception as e:
+        logger.warning(f"Could not read tracks for metric logging: {e}")
 
     # Custom collation to encode X on the fly
     codec = WaveChunkCodec(frame_ms=cfg.renderer_frame_ms, hop_ms=cfg.renderer_hop_ms, target_sr=cfg.canonical_sample_rate)

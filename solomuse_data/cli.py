@@ -1,6 +1,9 @@
 import argparse
 import sys
 import logging
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 from typing import Optional
 from solomuse_data.config import load_config, PipelineConfig
 
@@ -31,8 +34,8 @@ def segment(cfg: PipelineConfig, dataset: str):
 
 def validate(cfg: PipelineConfig, dataset: str):
     from solomuse_data.validate import validate_pairs, validate_segments
-    validate_pairs(cfg)
-    validate_segments(cfg)
+    validate_pairs(cfg, dataset)
+    validate_segments(cfg, dataset)
 
 def run_all(cfg: PipelineConfig, dataset: str):
     logger.info(f"Running full pipeline for dataset: {dataset}")
@@ -97,6 +100,10 @@ def main():
     train_intent_parser = subparsers.add_parser("train-intent", parents=[parent_parser], help="Train Layer 2: Baseline Intent Planner")
     train_intent_parser.add_argument("--wandb", action="store_true", help="Enable W&B for this run")
     train_intent_parser.add_argument("--force-regenerate-splits", action="store_true", help="Force rebuild of persistent splits mapping instead of using existing one.")
+    train_intent_parser.add_argument("--intent-model-type", type=str, choices=["gru", "transformer"], help="Model architecture override")
+    train_intent_parser.add_argument("--intent-overfit-one-batch", action="store_true", help="Overfit on a single batch for testing")
+    train_intent_parser.add_argument("--intent-epochs", type=int, help="Epochs override")
+    train_intent_parser.add_argument("--intent-batch-size", type=int, help="Batch size override")
 
     eval_intent_parser = subparsers.add_parser("eval-intent", parents=[parent_parser], help="Evaluate Layer 2: Baseline Intent Planner")
     eval_intent_parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train, val, test, all)")
@@ -106,29 +113,80 @@ def main():
 
     infer_intent_parser = subparsers.add_parser("infer-intent", parents=[parent_parser], help="Run inference with Intent Planner")
     infer_intent_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing situation.npy")
+    infer_intent_parser.add_argument("--intent-model-type", type=str, choices=["gru", "transformer"], help="Model architecture override")
+
+    infer_pipeline_parser = subparsers.add_parser("infer-pipeline", parents=[parent_parser], help="Unified E2E Pipeline Inference")
+    infer_pipeline_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment directory containing x.wav")
+    infer_pipeline_parser.add_argument("--intent-model-type", type=str, choices=["gru", "transformer"], help="Intent model override")
+    infer_pipeline_parser.add_argument("--renderer-model-type", type=str, choices=["conv1d", "token_transformer"], help="Renderer model override")
 
     renderer_parser = subparsers.add_parser("renderer-targets", parents=[parent_parser], help="Run Layer 3: Renderer Target Builder")
     renderer_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
     renderer_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
 
+    renderer_tokens_parser = subparsers.add_parser("renderer-token-targets", parents=[parent_parser], help="Run Layer 3: Renderer Token Dataset Builder (V2)")
+    renderer_tokens_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    renderer_tokens_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+
     train_ren_parser = subparsers.add_parser("train-renderer", parents=[parent_parser], help="Train Layer 3: Baseline Renderer")
     train_ren_parser.add_argument("--force-regenerate-splits", action="store_true", help="Force rebuild of persistent splits mapping instead of using existing one.")
+    
+    train_ren_v2_parser = subparsers.add_parser("train-renderer-v2", parents=[parent_parser], help="Train Layer 3: Transformer Token LM Renderer (V2)")
+    train_ren_v2_parser.add_argument("--renderer-batch-size", type=int, help="Batch size override")
+    train_ren_v2_parser.add_argument("--renderer-epochs", type=int, help="Epochs override")
     
     render_seg_parser = subparsers.add_parser("render-segment", parents=[parent_parser], help="Render offline segment")
     render_seg_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment")
     
+    # Simulate Renderer V2 (Transformer)
+    parser_sim_r2 = subparsers.add_parser("infer-renderer-v2", parents=[parent_parser], help="Generate codec tokens via Transformer and write wavs")
+    parser_sim_r2.add_argument("--segment-id", type=str, required=True, help="Target segment to infer over")
+    
     live_sim_parser = subparsers.add_parser("live-sim", parents=[parent_parser], help="Run streaming live simulation")
     live_sim_parser.add_argument("--wav", type=str, required=True, help="Input backing track path")
     live_sim_parser.add_argument("--out", type=str, required=True, help="Output solo audio path")
+    live_sim_parser.add_argument("--intent-model-type", type=str, choices=["gru", "transformer"], help="Intent model override")
+    live_sim_parser.add_argument("--renderer-model-type", type=str, choices=["conv1d", "token_transformer"], help="Renderer model override")
+    live_sim_parser.add_argument("--hop-s", type=float, default=0.5, help="Simulation hop size in seconds")
     live_sim_parser.add_argument("--wandb", action="store_true", help="Enable W&B tracking explicitly for this run")
     live_sim_parser.add_argument("--run-name", type=str, help="Custom W&B run name override")
     
     # Artifact inspection arguments
-    inspect_artifacts_parser = subparsers.add_parser("inspect-artifacts", parents=[parent_parser], help="Inspect generated artifacts (e.g., segments, situations, intents)")
-    inspect_artifacts_parser.add_argument("--action", type=str, choices=["sample", "stats", "splits", "decode"], required=True, help="Action for inspect-artifacts command.")
-    inspect_artifacts_parser.add_argument("--sample-size", type=int, default=10, help="Number of items to sample in inspection commands.")
-    inspect_artifacts_parser.add_argument("--json-report", type=str, nargs="?", const="auto", help="Path to optionally dump json inspection report. Pass flag without value for auto-path.")
-    inspect_artifacts_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    inspect_artifacts_parser = subparsers.add_parser("inspect-artifacts", help="Inspect generated artifacts (e.g., segments, situations, intents)")
+    inspect_subparsers = inspect_artifacts_parser.add_subparsers(dest="inspect_command")
+
+    # Action-based inspection (old style)
+    action_parser = inspect_subparsers.add_parser("action", help="Run legacy action-based inspection")
+    action_parser.add_argument("--action", type=str, choices=["sample", "stats", "splits", "decode"], required=True, help="Action for inspect-artifacts command.")
+    action_parser.add_argument("--sample-size", type=int, default=10, help="Number of items to sample in inspection commands.")
+    action_parser.add_argument("--json-report", type=str, nargs="?", const="auto", help="Path to optionally dump json inspection report. Pass flag without value for auto-path.")
+    action_parser.add_argument("--limit", type=int, help="Limit number of segments to process")
+    action_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
+    action_parser.add_argument("--dataset", type=str, required=True, help="Target dataset name (e.g., slakh, musdb)")
+
+    # Summarize inspection (new style)
+    summarize_parser = inspect_subparsers.add_parser("summarize", help="Summarize an existing unified report")
+    summarize_parser.add_argument("--report-path", type=str, required=True, help="Path to the CSV or JSON report file to summarize")
+    summarize_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
+    summarize_parser.add_argument("--dataset", type=str, required=True, help="Target dataset name")
+    summarize_parser.add_argument("--only-generated", action="store_true", help="Restricts rows to those with at least one existing artifact")
+    summarize_parser.add_argument("--only-clean", action="store_true", help="Restricts rows to those that are 'clean' (all artifacts exist and alignment ok)")
+    
+    # Unified Report Export
+    unified_report_parser = subparsers.add_parser("export-unified-report", parents=[parent_parser], help="Export unified truth table report for a dataset")
+    unified_report_parser.add_argument("--action", type=str, choices=["report", "coverage", "silence-audit", "sanity-triples"], default="report", help="Specific diagnostic action to perform")
+    unified_report_parser.add_argument("--limit", type=int, default=200, help="Limit number of segments to process")
+    unified_report_parser.add_argument("--seed", type=int, default=42, help="Seed for deterministic sampling")
+    unified_report_parser.add_argument("--include-missing", action="store_true", default=True, help="Include segments with missing artifacts")
+    unified_report_parser.add_argument("--output", type=str, help="Output CSV/JSON path (relative to output_root or absolute)")
+    
+    # Silence Audit
+    unified_report_parser.add_argument("--rms-threshold", type=float, default=1e-4, help="Threshold for silence detection in RMS")
+    
+    # Sanity Triples
+    unified_report_parser.add_argument("--num-samples", type=int, default=10, help="Number of samples for sanity triples if no IDs provided")
+    unified_report_parser.add_argument("--balanced-by-split", action="store_true", help="Try to sample equally from train/val/test splits")
+    unified_report_parser.add_argument("--segment-ids-file", type=str, help="Path to text file with specific segment_ids to export")
     
     args = parser.parse_args()
 
@@ -173,6 +231,15 @@ def main():
             cfg.wandb_enabled = True
         if getattr(args, "force_regenerate_splits", False):
             cfg.force_regenerate_splits = True
+        if getattr(args, "intent_model_type", None):
+            cfg.intent_model_type = args.intent_model_type
+        if getattr(args, "intent_overfit_one_batch", False):
+            cfg.intent_overfit_one_batch = True
+        if getattr(args, "intent_epochs", None):
+            cfg.intent_epochs = args.intent_epochs
+        if getattr(args, "intent_batch_size", None):
+            cfg.intent_batch_size = args.intent_batch_size
+            
         from solomuse_model.intent.train import run_train_intent
         run_train_intent(cfg, args.dataset)
     elif args.command == "eval-intent":
@@ -184,27 +251,31 @@ def main():
         from solomuse_model.intent.inspect import inspect_intent_crashes
         inspect_intent_crashes(cfg, args.dataset)
     elif args.command == "inspect-artifacts":
-        from solomuse_data.inspect_artifacts import inspect_artifacts
-        
-        limit = getattr(args, "limit", None)
-        action = getattr(args, "action")
-        if not action:
-            logger.error("--action must be specified for inspect-artifacts")
-            return
-            
-        inspect_artifacts(
-            cfg=cfg, 
-            dataset_name=args.dataset, 
-            action=action, 
-            sample_size=args.sample_size, 
-            limit=limit, 
-            json_report=args.json_report
-        )
+        if args.inspect_command == "action":
+            from solomuse_data.inspect_artifacts import inspect_artifacts
+            limit = getattr(args, "limit", None)
+            inspect_artifacts(
+                cfg=cfg, 
+                dataset_name=args.dataset, 
+                action=args.action, 
+                sample_size=args.sample_size, 
+                limit=limit, 
+                json_report=args.json_report
+            )
+        elif args.inspect_command == "summarize":
+            from solomuse_data.inspection.summary import UnifiedSummaryExporter
+            exporter = UnifiedSummaryExporter(cfg.output_root)
+            exporter.run_summary(args.report_path)
+        else:
+            logger.error("Must specify sub-command for inspect-artifacts: action | summarize")
     elif args.command == "infer-intent":
         from solomuse_model.intent.infer import IntentInferencer
         import numpy as np
         from pathlib import Path
         
+        if getattr(args, "intent_model_type", None):
+            cfg.intent_model_type = args.intent_model_type
+            
         seg_dir = Path(getattr(args, "segment_dir"))
         sit_path = seg_dir / "situation.npy"
         if not sit_path.exists():
@@ -227,11 +298,34 @@ def main():
         limit = getattr(args, "limit", None)
         overwrite = getattr(args, "overwrite", False)
         run_renderer_target_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
+    elif args.command == "renderer-token-targets":
+        from solomuse_model.renderer.run_tokens import run_renderer_token_build
+        limit = getattr(args, "limit", None)
+        overwrite = getattr(args, "overwrite", False)
+        run_renderer_token_build(cfg, args.dataset, limit=limit, overwrite=overwrite)
     elif args.command == "train-renderer":
         if getattr(args, "force_regenerate_splits", False):
             cfg.force_regenerate_splits = True
         from solomuse_model.renderer.train import run_train_renderer
         run_train_renderer(cfg, args.dataset)
+        
+    elif args.command == "train-renderer-v2":
+        if getattr(args, "renderer_batch_size", None) is not None:
+            cfg.renderer_batch_size = args.renderer_batch_size
+        if getattr(args, "renderer_epochs", None) is not None:
+            cfg.renderer_epochs = args.renderer_epochs
+            
+        from solomuse_model.renderer.train_v2 import run_train_renderer_v2
+        run_train_renderer_v2(cfg, args.dataset)
+        
+    elif args.command == "infer-renderer-v2":
+        from solomuse_model.renderer.infer_v2 import run_inference_v2
+        segment_id = getattr(args, "segment_id", None)
+        if not segment_id:
+            logger.error("Must provide --segment-id for infer-renderer-v2 target")
+            return
+        run_inference_v2(cfg, args.dataset, segment_id)
+        
     elif args.command == "render-segment":
         from solomuse_data.io import read_audio
         import soundfile as sf
@@ -258,21 +352,70 @@ def main():
         out_path = seg_dir / "y_hat.wav"
         sf.write(str(out_path), y_hat, sr)
         logger.info(f"Rendered offline segment solo to {out_path}")
-    elif args.command == "live-sim":
-        from solomuse_data.io import read_audio
-        import soundfile as sf
-        
-        x_path = getattr(args, "wav")
-        out_path = getattr(args, "out")
-        
-        x_audio, sr = read_audio(x_path)
-        
+    elif args.command == "infer-pipeline":
         from solomuse_model.pipeline import SoloMusePipeline
-        pipeline = SoloMusePipeline(cfg)
-        y_out = pipeline.run_live_simulation(x_audio, chunk_size_s=1.0)
+        import soundfile as sf
+        from pathlib import Path
         
-        sf.write(out_path, y_out, sr)
-        logger.info(f"Live Simulation computed! Out: {out_path}")
+        if getattr(args, "intent_model_type", None):
+            cfg.intent_model_type = args.intent_model_type
+        if getattr(args, "renderer_model_type", None):
+            cfg.renderer_model_type = args.renderer_model_type
+            
+        seg_dir = Path(getattr(args, "segment_dir"))
+        x_path = seg_dir / "x.wav"
+        if not x_path.exists():
+            logger.error(f"Missing x.wav in {seg_dir}")
+            return
+            
+        x_audio, _ = sf.read(x_path)
+        pipeline = SoloMusePipeline(cfg)
+        pipeline.run_pipeline_infer(x_audio, segment_id=seg_dir.name, output_dir=seg_dir)
+
+    elif args.command == "live-sim":
+        from solomuse_model.pipeline import SoloMusePipeline
+        import soundfile as sf
+        from pathlib import Path
+        
+        if getattr(args, "intent_model_type", None):
+            cfg.intent_model_type = args.intent_model_type
+        if getattr(args, "renderer_model_type", None):
+            cfg.renderer_model_type = args.renderer_model_type
+            
+        wav_path = Path(getattr(args, "wav"))
+        if not wav_path.exists():
+            logger.error(f"Input wav {wav_path} not found")
+            return
+            
+        x_full, sr = sf.read(wav_path)
+        if sr != cfg.canonical_sample_rate:
+            logger.warning(f"Resampling input from {sr} to {cfg.canonical_sample_rate}")
+            # Simplified resample for sim
+            import librosa
+            x_full = librosa.resample(x_full, orig_sr=sr, target_sr=cfg.canonical_sample_rate)
+            
+        pipeline = SoloMusePipeline(cfg)
+        y_out = pipeline.run_live_simulation(x_full, chunk_size_s=getattr(args, "hop_s", 0.5))
+        
+        out_path = Path(getattr(args, "out"))
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        sf.write(out_path, y_out, cfg.canonical_sample_rate)
+        logger.info(f"Saved live-sim solo to {out_path}")
+        
+    elif args.command == "export-unified-report":
+        from solomuse_data.inspection.unified import UnifiedArtifactExporter
+        exporter = UnifiedArtifactExporter(cfg, args.dataset)
+        exporter.run_export(
+            action=getattr(args, "action", "report"),
+            limit=args.limit,
+            seed=args.seed,
+            include_missing=args.include_missing,
+            output_path=args.output,
+            rms_threshold=getattr(args, "rms_threshold", 1e-4),
+            num_samples=getattr(args, "num_samples", 10),
+            balanced_by_split=getattr(args, "balanced_by_split", False),
+            segment_ids_file=getattr(args, "segment_ids_file", None)
+        )
 
 def model_status(cfg: PipelineConfig):
     """

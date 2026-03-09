@@ -12,6 +12,7 @@ from solomuse_model.intent.dataset import build_intent_dataloaders
 from solomuse_model.utils.experiment_tracking import ExperimentTracker
 from solomuse_model.paths import get_intent_checkpoint_path
 from solomuse_model.intent.model_v1 import IntentPlannerGRU_V1
+from solomuse_model.intent.model_v2 import IntentPlannerTransformer_V2
 import datetime
 from tqdm import tqdm
 
@@ -203,9 +204,23 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
             output_dim=7, # Intent D=7
             dropout=cfg.intent_dropout
         ).to(device)
+    elif cfg.intent_model_type.lower() == "transformer":
+        model = IntentPlannerTransformer_V2(
+            input_dim=32,
+            hidden_dim=cfg.intent_hidden_dim,
+            num_layers=cfg.intent_num_layers,
+            nhead=8, # Strict 8-head assumption for robustness
+            output_dim=7,
+            dropout=cfg.intent_dropout
+        ).to(device)
     else:
         logger.error(f"Unsupported intent_model_type: {cfg.intent_model_type}")
         return
+        
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Initialized {model.__class__.__name__} with {num_params:,} trainable parameters.")
+    logger.info(f"  - Hidden Dim: {cfg.intent_hidden_dim}")
+    logger.info(f"  - Layers: {cfg.intent_num_layers}")
     
     weight_decay = getattr(cfg, "intent_weight_decay", 1e-5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.intent_lr, weight_decay=weight_decay)

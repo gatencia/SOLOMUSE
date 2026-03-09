@@ -12,7 +12,7 @@ from solomuse_data.audio_ops import compute_peak_dbfs
 
 logger = logging.getLogger(__name__)
 
-def validate_pairs(cfg: PipelineConfig) -> Dict:
+def validate_pairs(cfg: PipelineConfig, dataset: str) -> Dict:
     """
     Validate the pairs manifest.
     Checks:
@@ -36,15 +36,13 @@ def validate_pairs(cfg: PipelineConfig) -> Dict:
     }
 
     # Locate manifest(s)
-    # We iterate over configured datasets
     manifest_paths = []
-    for ds_name in cfg.dataset_roots.keys():
-        p = Path(cfg.output_root) / "pairs" / ds_name / "manifest.csv"
-        if p.exists():
-            manifest_paths.append(p)
+    p = Path(cfg.output_root) / "pairs" / dataset / "manifest.csv"
+    if p.exists():
+        manifest_paths.append(p)
     
     if not manifest_paths:
-        logger.warning("No pair manifests found.")
+        logger.warning(f"No pair manifests found for {dataset}.")
         return report
 
     # Load all manifests
@@ -53,7 +51,7 @@ def validate_pairs(cfg: PipelineConfig) -> Dict:
         try:
             df_list.append(pd.read_csv(p))
         except Exception as e:
-            logger.error(f"Failed to read manifest {p}: {e}")
+            logger.warning(f"Failed to read manifest {p} (Sandbox lock): {e}")
             
     if not df_list:
         return report
@@ -160,23 +158,18 @@ def validate_pairs(cfg: PipelineConfig) -> Dict:
         
     return report
 
-def validate_segments(cfg: PipelineConfig) -> Dict:
+def validate_segments(cfg: PipelineConfig, dataset: str) -> Dict:
     """
     Validate the segments manifest.
-    Checks:
-    - Duration within tolerance
-    - SR/Channels
-    - Alignment
-    - Min Energy
     """
-    logger.info("Validating Segments...")
+    logger.info(f"Validating Segments for {dataset}...")
     report = {
         "passed": 0,
         "failed": 0,
         "failures": []
     }
     
-    manifest_path = Path(cfg.output_root) / "segments" / "manifest.csv"
+    manifest_path = Path(cfg.output_root) / "segments" / dataset / "manifest.csv"
     if not manifest_path.exists():
         logger.warning(f"Segments manifest not found at {manifest_path}")
         return report
