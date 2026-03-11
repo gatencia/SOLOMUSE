@@ -105,20 +105,24 @@ class SoloMusePipeline:
             from solomuse_model.paths import get_renderer_checkpoint_path
             
             ckpt_path = get_renderer_checkpoint_path(self.cfg)
-            sim = TokenRendererSimulator(self.cfg, ckpt_path)
-            adapter = EnCodecAdapter()
-            
-            # 1. Get X Tokens
-            x_tokens = adapter.encode(x_audio, self.cfg.canonical_sample_rate)
-            
-            # 2. Align Intent
-            # EnCodec tokens are strictly 75Hz
-            intent_aligned = upsample_intent_to_tokens(intent_plan, self.cfg.intent_hz, 75.0, x_tokens.shape[0])
-            
-            # 3. Generate
-            y_tokens, y_hat = sim.generate(x_tokens, intent_aligned, situation_summary)
-            outputs["y_hat"] = y_hat
-            outputs["y_tokens"] = y_tokens
+            if not Path(ckpt_path).exists():
+                logger.warning(f"Renderer checkpoint not found at {ckpt_path}. Returning silence.")
+                outputs["y_hat"] = np.zeros_like(x_audio)
+            else:
+                sim = TokenRendererSimulator(self.cfg, ckpt_path)
+                adapter = EnCodecAdapter()
+                
+                # 1. Get X Tokens
+                x_tokens = adapter.encode(x_audio, self.cfg.canonical_sample_rate)
+                
+                # 2. Align Intent
+                # EnCodec tokens are strictly 75Hz
+                intent_aligned = upsample_intent_to_tokens(intent_plan, self.cfg.intent_hz, 75.0, x_tokens.shape[0])
+                
+                # 3. Generate
+                y_tokens, y_hat = sim.generate(x_tokens, intent_aligned, situation_summary)
+                outputs["y_hat"] = y_hat
+                outputs["y_tokens"] = y_tokens
             
         else: # conv1d / v1
             from solomuse_model.renderer.infer import render_segment
