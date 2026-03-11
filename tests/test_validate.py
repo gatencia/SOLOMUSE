@@ -60,8 +60,8 @@ def fake_output_root(tmp_path):
 def fake_segments_root(fake_output_root):
     # Create segments directory and manifest
     root = fake_output_root
-    seg_dir = root / "segments"
-    seg_dir.mkdir(exist_ok=True)
+    seg_dir = root / "segments" / "mock"
+    seg_dir.mkdir(parents=True, exist_ok=True)
     
     sr = 44100
     # Create segment files
@@ -107,7 +107,7 @@ def test_validate_pairs_catches_errors(fake_output_root, cfg):
     # But wait, config.py validation checks keys in dataset_roots.
     # We hacked config previously to allow "mock".
     
-    report = validate_pairs(cfg)
+    report = validate_pairs(cfg, "mock")
     
     assert report["passed"] == 1 # Only 'valid' row passes
     assert report["failed"] == 4 # wrong_sr, clipped, mismatch, missing
@@ -129,7 +129,7 @@ def test_validate_pairs_catches_errors(fake_output_root, cfg):
 from solomuse_data.validate import validate_segments
 
 def test_validate_segments_catches_errors(fake_segments_root, cfg):
-    report = validate_segments(cfg)
+    report = validate_segments(cfg, "mock")
     
     assert report["passed"] == 1 # valid
     assert report["failed"] == 1 # bad_dur

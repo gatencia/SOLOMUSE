@@ -174,3 +174,33 @@ docker-compose run --rm solomuse run-all --config config.yaml --dataset slakh
 
 The processed data will appear in your local `./data` folder (mounted as volume).
 
+## 7. Run on RunPod (One-Click Pipeline)
+
+For full-scale pipeline execution on cloud GPUs (like those on RunPod with large persistent NVMe storage), we include a turnkey Python runner script. 
+
+This single script acquires the heavy 100GB+ Slakh2100 dataset directly from Zenodo (or uses your uploaded archive), builds all data and cache artifacts (including EnCodec transformer tokens), trains both Model layers sequentially, and executes a fully automated end-to-end verification report.
+
+**Usage:**
+```bash
+# 1. Clone the repository into your RunPod workspace
+cd /workspace
+git clone https://github.com/gatencia/SOLOMUSE.git
+cd SOLOMUSE
+
+# 2. Install the package
+pip install -e .
+
+# 3. Run the orchestration script
+# This places all models, raw data, and outputs securely in /workspace/SOLOMUSE_RUNS
+python scripts/runpod_run_all.py --run-name my_first_training_run
+```
+
+**Using an Uploaded Dataset Archive:**
+If you manually uploaded the `slakh2100.zip` or `.tar` archive to your RunPod volume instead of direct downloading:
+```bash
+python scripts/runpod_run_all.py \
+  --slakh-archive /workspace/datasets/slakh2100.zip \
+  --run-name my_first_training_run
+```
+
+Your outputs (models, verification audio, and truth-table reports) will land safely in `<persistent-root>/SOLOMUSE_RUNS/<run-name>/`!

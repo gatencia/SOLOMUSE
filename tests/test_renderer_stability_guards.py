@@ -14,7 +14,7 @@ def test_renderer_nan_input_guard(tmp_path):
     
     seg_dir = tmp_path / "segments" / "test_ds"
     seg_dir.mkdir(parents=True)
-    (seg_dir / "manifest_renderer.csv").write_text("dummy,csv\n")
+    (seg_dir / "manifest_renderer.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
     
     with patch("solomuse_model.renderer.train.DataLoader") as mock_dl:
         mock_dl.return_value = [
@@ -29,8 +29,9 @@ def test_renderer_nan_input_guard(tmp_path):
         with patch("solomuse_model.renderer.train.RendererDataset") as mock_ds:
             mock_ds.return_value.__len__.return_value = 1
             
-            with pytest.raises(RuntimeError, match="NaN/Inf found in Renderer inputs/targets"):
-                run_train_renderer(cfg, "test_ds")
+            with patch("solomuse_model.utils.splits.create_track_grouped_splits", return_value=None):
+                with pytest.raises(RuntimeError, match="NaN/Inf found in Renderer inputs/targets"):
+                    run_train_renderer(cfg, "test_ds")
 
 
 def test_renderer_nan_prediction_guard(tmp_path):
@@ -42,7 +43,7 @@ def test_renderer_nan_prediction_guard(tmp_path):
     
     seg_dir = tmp_path / "segments" / "test_ds"
     seg_dir.mkdir(parents=True)
-    (seg_dir / "manifest_renderer.csv").write_text("a,b\n")
+    (seg_dir / "manifest_renderer.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
     
     with patch("solomuse_model.renderer.train.DataLoader") as mock_dl:
         mock_dl.return_value = [
@@ -64,5 +65,6 @@ def test_renderer_nan_prediction_guard(tmp_path):
                 instance.return_value = torch.full((2, 10, 882), float('nan'))
                 instance.parameters.return_value = [torch.nn.Parameter(torch.zeros(1))]
                 
-                with pytest.raises(RuntimeError, match="NaN/Inf found in Renderer predictions"):
-                    run_train_renderer(cfg, "test_ds")
+                with patch("solomuse_model.utils.splits.create_track_grouped_splits", return_value=None):
+                    with pytest.raises(RuntimeError, match="NaN/Inf found in Renderer predictions"):
+                        run_train_renderer(cfg, "test_ds")

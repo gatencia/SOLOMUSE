@@ -24,15 +24,13 @@ def test_intent_dataset_path_resolution(tmp_path):
 
 def test_checkpoint_paths(tmp_path):
     cfg = PipelineConfig(
-        output_root=str(tmp_path), 
-        intent_model_version="v2", 
-        renderer_model_version="v2"
+        output_root=str(tmp_path)
     )
     intent_path = get_intent_checkpoint_path(cfg)
     renderer_path = get_renderer_checkpoint_path(cfg)
     
-    assert "intent_v2" in str(intent_path)
-    assert "renderer_v2" in str(renderer_path)
+    assert "intent_v1" in str(intent_path)
+    assert "renderer_v1" in str(renderer_path)
     
     cfg.intent_checkpoint_path = "/custom/intent.pt"
     cfg.renderer_checkpoint_path = "/custom/renderer.pt"

@@ -4,6 +4,7 @@ import csv
 import numpy as np
 import pytest
 import tempfile
+import soundfile as sf
 from pathlib import Path
 from solomuse_data.config import PipelineConfig
 from solomuse_data.inspection.unified import UnifiedArtifactExporter
@@ -27,7 +28,7 @@ def mock_report_env():
         # 1. Create Manifest
         manifest_path = seg_root / "manifest.csv"
         with open(manifest_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["dataset", "track_id", "segment_id", "start_s", "end_s", "duration_s", "x_path", "y_path"])
+            writer = csv.DictWriter(f, fieldnames=["dataset", "track_id", "segment_id", "start_s", "end_s", "duration_s", "x_path", "y_path", "split"])
             writer.writeheader()
             writer.writerow({
                 "dataset": dataset,
@@ -35,9 +36,9 @@ def mock_report_env():
                 "segment_id": seg_id,
                 "start_s": 0.0,
                 "end_s": 6.0,
-                "duration_s": 6.0,
                 "x_path": "x.wav",
-                "y_path": "y.wav"
+                "y_path": "y.wav",
+                "split": "train"
             })
             
         # 2. Create Splits
@@ -58,7 +59,6 @@ def mock_report_env():
         np.save(seg_dir / "renderer_target.npy", np.zeros((600, 256)).astype(np.float32))
         
         # 4. Create Audio (x, y, y_hat)
-        import soundfile as sf
         # x: 1s of 441hz sine wave
         t = np.linspace(0, 1, cfg.canonical_sample_rate)
         x_audio = 0.5 * np.sin(2 * np.pi * 440 * t)
@@ -69,7 +69,7 @@ def mock_report_env():
         sf.write(seg_dir / "y_hat.wav", 0.05 * x_audio, cfg.canonical_sample_rate)
         # Update manifest to point to these
         with open(manifest_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["dataset", "track_id", "segment_id", "start_s", "end_s", "duration_s", "x_path", "y_path"])
+            writer = csv.DictWriter(f, fieldnames=["dataset", "track_id", "segment_id", "start_s", "end_s", "duration_s", "x_path", "y_path", "split"])
             writer.writeheader()
             writer.writerow({
                 "dataset": dataset,
@@ -78,8 +78,9 @@ def mock_report_env():
                 "start_s": 0.0,
                 "end_s": 1.0,
                 "duration_s": 1.0,
-                "x_path": "../../x.wav", # Relative to segment_root
-                "y_path": "../../y.wav"
+                "x_path": str(tmp_path / "x.wav"),
+                "y_path": str(tmp_path / "y.wav"),
+                "split": "train"
             })
 
         yield cfg, dataset, seg_id, seg_dir
@@ -203,14 +204,12 @@ def test_silence_detection_synthetic(mock_report_env):
     sf.write(silent_wav, np.zeros(1000), cfg.canonical_sample_rate)
     
     # Update manifest to point to it
+    import pandas as pd
     manifest_path = Path(exporter.segment_root) / "manifest.csv"
-    with open(manifest_path, "r") as f:
-        rows = list(csv.DictReader(f))
-    rows[0]["y_path"] = "../../absolute_silence.wav"
-    with open(manifest_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
+    df = pd.read_csv(manifest_path)
+    if len(df) > 0:
+        df.loc[0, "y_path"] = str(silent_wav)
+        df.to_csv(manifest_path, index=False)
         
     report = exporter.run_export(limit=1, action="silence-audit", rms_threshold=0.01)
     assert report[0]["y_is_silent"] == 1

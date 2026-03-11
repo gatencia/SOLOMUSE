@@ -56,12 +56,23 @@ def mock_pipeline_dir(tmp_path):
     
     manifest_dir = output_root / "segments" / "mock"
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = manifest_dir / "manifest_intent.csv"
     
-    df = pd.DataFrame([{
+    # 1. Pipeline builder needs intent manifest
+    manifest_intent_path = manifest_dir / "manifest_intent.csv"
+    df_intent = pd.DataFrame([{
         "segment_id": "seg1",
         "dataset": "mock",
         "track_id": "track1"
+    }])
+    df_intent.to_csv(manifest_intent_path, index=False)
+    
+    # 2. Dataset loader needs the splits
+    manifest_path = manifest_dir / "manifest_renderer_splits.csv"
+    df = pd.DataFrame([{
+        "segment_id": "seg1",
+        "dataset": "mock",
+        "track_id": "track1",
+        "split": "train"
     }])
     df.to_csv(manifest_path, index=False)
     
@@ -104,7 +115,7 @@ def test_renderer_dataset_loads_sample(mock_pipeline_dir):
     run_renderer_target_build(cfg, "mock")
     
     # Test Dataset
-    ds = RendererDataset(manifest_path, split="train", val_ratio=0.0) # force train split
+    ds = RendererDataset(manifest_path)
     
     assert len(ds) == 1
     inp, targ = ds[0]

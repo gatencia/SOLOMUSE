@@ -74,7 +74,7 @@ def test_segment_dataset(fake_pairs_root, cfg):
     assert row1["end_s"] == 6.0
     
     # Check file duration
-    x1, sr1 = sf.read(row1["x_path"])
+    x1, sr1 = sf.read(Path(cfg.output_root) / row1["x_path"])
     assert len(x1) == 44100 * 6
     
     # 2. 3s - 9s
@@ -82,7 +82,7 @@ def test_segment_dataset(fake_pairs_root, cfg):
     assert row2["start_s"] == 3.0
     assert row2["end_s"] == 9.0
     
-    x2, sr2 = sf.read(row2["x_path"])
+    x2, sr2 = sf.read(Path(cfg.output_root) / row2["x_path"])
     assert len(x2) == 44100 * 6
     
     # Verify content consistency (roughly)

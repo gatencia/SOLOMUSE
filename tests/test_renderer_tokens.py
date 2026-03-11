@@ -54,15 +54,18 @@ def test_token_manifest_splits(tmp_path):
     np.save(seg_dir / "situation.npy", np.zeros(32))
     np.save(seg_dir / "intent_targets.npy", np.zeros((60, 7)))
     
-    # Write manifest_renderer_splits.csv
-    manifest_path = segments_dir / "manifest_renderer_splits.csv"
+    # Write manifest_renderer_splits.csv and base manifest.csv
+    manifest_base_path = segments_dir / "manifest.csv"
+    manifest_splits_path = segments_dir / "manifest_renderer_splits.csv"
+    
     df = pd.DataFrame([{
         "dataset": "mock",
         "track_id": track_id,
         "segment_id": seg_id,
         "split": "val"
     }])
-    df.to_csv(manifest_path, index=False)
+    df.to_csv(manifest_splits_path, index=False)
+    df.drop(columns=["split"]).to_csv(manifest_base_path, index=False)
     
     cfg = PipelineConfig(
         output_root=str(output_root),

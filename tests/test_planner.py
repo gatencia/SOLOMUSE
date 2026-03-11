@@ -38,10 +38,13 @@ def mock_dataset(tmp_path):
     return manifest_path
 
 def test_dataset_loads_shapes(mock_dataset):
-    ds = IntentDataset(str(mock_dataset), split="train", val_ratio=0.0) # force train split
+    cfg = PipelineConfig(output_root=str(Path(mock_dataset).parent.parent.parent))
+    df = pd.read_csv(mock_dataset)
+    ds = IntentDataset(df, cfg)
     assert len(ds) == 1
     
-    X, Y = ds[0]
+    batch = ds[0]
+    X, Y = batch["situation"], batch["intent"]
     
     # X should be Broadcasted to F: [60, 32]
     assert X.shape == (60, 32)
@@ -61,14 +64,17 @@ def test_model_forward_shape():
     assert torch.all(preds >= 0.0) and torch.all(preds <= 1.0)
 
 def test_train_one_step_runs(mock_dataset):
-    ds = IntentDataset(str(mock_dataset), split="train", val_ratio=0.0)
+    cfg = PipelineConfig(output_root=str(Path(mock_dataset).parent.parent.parent))
+    df = pd.read_csv(mock_dataset)
+    ds = IntentDataset(df, cfg)
     loader = torch.utils.data.DataLoader(ds, batch_size=1)
     
     model = IntentPlannerGRU_V1(input_dim=32, hidden_dim=64, num_layers=1, output_dim=7)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = torch.nn.MSELoss()
     
-    X, Y = next(iter(loader))
+    batch = next(iter(loader))
+    X, Y = batch["situation"], batch["intent"]
     
     # Initial weights
     initial_weight = model.linear.weight.clone()
@@ -84,11 +90,16 @@ def test_train_one_step_runs(mock_dataset):
 
 def test_infer_returns_expected_shape():
     cfg = PipelineConfig(
+        output_root="/tmp/fake_root",
         intent_hidden_dim=64,
         intent_num_layers=1
     )
     # passing no checkpoint sets ready=True for uninitialized inference.
-    inferencer = IntentInferencer(cfg, checkpoint_path=None)
+    from unittest.mock import patch
+    with patch("pathlib.Path.exists", return_value=True):
+        with patch("torch.load", return_value={}):
+            with patch("solomuse_model.intent.model_v1.IntentPlannerGRU_V1.load_state_dict"):
+                inferencer = IntentInferencer(cfg, checkpoint_path=None)
     
     # single segment simulation
     sit_vec = np.random.rand(32).astype(np.float32)
@@ -102,6 +113,7 @@ def test_infer_returns_expected_shape():
 
 def test_pipeline_plan_intent_stub_or_model_path():
     cfg = PipelineConfig(
+        output_root="/tmp/fake_root",
         intent_hz=10,
         intent_checkpoint_path=None
     )
