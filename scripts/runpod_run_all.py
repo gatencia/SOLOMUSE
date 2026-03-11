@@ -165,7 +165,16 @@ def setup_python(args, repo_root: Path):
         # Force pip upgrade
         run_cmd(f"{python_bin} -m pip install --upgrade pip")
         
-        # Install project in editable mode
+        # Install Torch + CUDA explicitly (RunPod optimized)
+        # We use cu121 as a safe modern default for RunPod environments
+        torch_install_cmd = f"{python_bin} -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121"
+        logger.info(f"Installing PyTorch with CUDA: {torch_install_cmd}")
+        run_cmd(torch_install_cmd)
+        
+        # Install other modeling deps that might be missing from base package
+        run_cmd(f"{python_bin} -m pip install wandb matplotlib tqdm")
+        
+        # Install project in editable mode (will grab remaining deps from pyproject.toml)
         run_cmd(f"{python_bin} -m pip install -e .", cwd=repo_root)
         
         # Verify Torch + CUDA
