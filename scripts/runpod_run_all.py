@@ -216,11 +216,34 @@ renderer_sample_rate: 24000
 renderer_model_type: token_transformer
 intent_model_type: transformer
 
-# Hyper-parameters
-renderer_batch_size: {args.renderer_batch_size}
+# --- Intent V2 Hyperparameters ---
+intent_d_model: 256
+intent_num_layers: 6
+intent_num_heads: 8
+intent_ffn_dim: 1024
+intent_lr: 3e-4
+intent_weight_decay: 1e-2
 intent_batch_size: {args.intent_batch_size}
-renderer_epochs: {args.renderer_epochs}
 intent_epochs: {args.intent_epochs}
+intent_warmup_steps: 2000
+intent_lr_schedule: cosine
+
+# --- Renderer V2 Hyperparameters ---
+renderer_d_model: 768
+renderer_num_layers: 12
+renderer_num_heads: 12
+renderer_ffn_dim: 3072
+renderer_lr: 2e-4
+renderer_weight_decay: 1e-2
+renderer_batch_size: {args.renderer_batch_size}
+renderer_epochs: {args.renderer_epochs}
+renderer_warmup_steps: 5000
+renderer_lr_schedule: cosine
+
+# --- Sampling Defaults ---
+inference_temperature: 0.9
+inference_top_k: 50
+inference_top_p: 0.95
 """
         with open(config_path, "w") as f:
             f.write(config_yaml)
