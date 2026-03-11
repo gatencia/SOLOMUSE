@@ -305,7 +305,7 @@ def acquire_dataset(args):
                 if archive_path.suffix == ".zip":
                     run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
                 else:
-                    run_cmd(f"tar -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                    run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
             elif args.slakh_url:
                 archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
                 # Use persistent_root for the archive as well to leverage network volumes
@@ -313,10 +313,19 @@ def acquire_dataset(args):
                 logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
                 robust_download(args.slakh_url, archive_path)
                 logger.info("Extracting dataset...")
-                if ".tar.gz" in args.slakh_url:
-                    run_cmd(f"tar -xf {archive_path} -C {args.slakh_root} --strip-components=1")
-                else:
-                    run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                try:
+                    if ".tar.gz" in args.slakh_url:
+                        run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                    else:
+                        run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                except Exception as e:
+                    logger.error(f"Extraction failed. Your disk might be full. Note: The 100GB dataset needs ~200GB of total free space during extraction (100GB archive + 100GB extracted files).")
+                    logger.info("If you want to free up space and try again, you can manually delete the archive and run with the Tiny BabySlakh dataset.")
+                    raise e
+                    
+                logger.info("Cleaning up archive to save space...")
+                if archive_path.exists():
+                    archive_path.unlink()
             else:
                 logger.error("=" * 60)
                 logger.error(" DATASET ACQUISITION FAILED")
