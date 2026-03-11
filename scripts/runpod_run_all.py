@@ -157,28 +157,43 @@ def setup_python(args, repo_root: Path):
     python_bin = venv_dir / "bin" / "python"
     
     if not is_done(args.output_root, "stage0_env_setup") and not args.dry_run:
-        if not venv_dir.exists():
+        # 0.1 Create Venv
+        if not is_done(args.output_root, "stage0_1_venv") and not venv_dir.exists():
             logger.info(f"Creating virtual environment at {venv_dir}")
             run_cmd(f"python3 -m venv {venv_dir}")
+            mark_done(args.output_root, "stage0_1_venv")
         
-        logger.info("Installing dependencies...")
-        # Force pip upgrade
-        run_cmd(f"{python_bin} -m pip install --upgrade pip")
+        # 0.2 Pip Upgrade
+        if not is_done(args.output_root, "stage0_2_pip_upgrade"):
+            logger.info("Upgrading pip...")
+            run_cmd(f"{python_bin} -m pip install --upgrade pip")
+            mark_done(args.output_root, "stage0_2_pip_upgrade")
+            
+        # 0.3 Install Torch
+        if not is_done(args.output_root, "stage0_3_torch"):
+            # Install Torch + CUDA explicitly (RunPod optimized)
+            # We use cu121 as a safe modern default for RunPod environments
+            torch_install_cmd = f"{python_bin} -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121"
+            logger.info(f"Installing PyTorch with CUDA: {torch_install_cmd}")
+            run_cmd(torch_install_cmd)
+            mark_done(args.output_root, "stage0_3_torch")
+            
+        # 0.4 Install Common Modeling Deps
+        if not is_done(args.output_root, "stage0_4_modeling_deps"):
+            logger.info("Installing modeling dependencies (wandb, matplotlib, tqdm)...")
+            run_cmd(f"{python_bin} -m pip install wandb matplotlib tqdm")
+            mark_done(args.output_root, "stage0_4_modeling_deps")
+            
+        # 0.5 Install Project Editable
+        if not is_done(args.output_root, "stage0_5_editable"):
+            logger.info("Installing project in editable mode (grabbing remaining deps)...")
+            run_cmd(f"{python_bin} -m pip install -e .", cwd=repo_root)
+            mark_done(args.output_root, "stage0_5_editable")
         
-        # Install Torch + CUDA explicitly (RunPod optimized)
-        # We use cu121 as a safe modern default for RunPod environments
-        torch_install_cmd = f"{python_bin} -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121"
-        logger.info(f"Installing PyTorch with CUDA: {torch_install_cmd}")
-        run_cmd(torch_install_cmd)
-        
-        # Install other modeling deps that might be missing from base package
-        run_cmd(f"{python_bin} -m pip install wandb matplotlib tqdm")
-        
-        # Install project in editable mode (will grab remaining deps from pyproject.toml)
-        run_cmd(f"{python_bin} -m pip install -e .", cwd=repo_root)
-        
-        # Verify Torch + CUDA
-        verify_script = f"""
+        # 0.6 Verification
+        if not is_done(args.output_root, "stage0_6_verification"):
+            logger.info("Verifying environment...")
+            verify_script = f"""
 import torch
 import sys
 print(f'Python: {{sys.version}}')
@@ -189,20 +204,21 @@ if torch.cuda.is_available():
 else:
     print('WARNING: CUDA NOT DETECTED')
 """
-        run_cmd(f"{python_bin} -c \"{verify_script}\"")
-        
-        # Safety check for vendored torch
-        safety_script = """
+            run_cmd(f"{python_bin} -c \"{verify_script}\"")
+            
+            # Safety check for vendored torch
+            safety_script = """
 import sys
 import torch
 path = torch.__file__
 if 'vendored_deps' in path:
-    print(f"CRITICAL ERROR: Torch is importing from vendored location: {path}")
-    print("Please remove it and ensure pip-installed torch is used.")
+    print(f'CRITICAL ERROR: Torch is importing from vendored location: {path}')
+    print('Please remove it and ensure pip-installed torch is used.')
     sys.exit(1)
 """
-        run_cmd(f"{python_bin} -c \"{safety_script}\"")
-        
+            run_cmd(f"{python_bin} -c \"{safety_script}\"")
+            mark_done(args.output_root, "stage0_6_verification")
+            
         mark_done(args.output_root, "stage0_env_setup")
     else:
         logger.info("Stage 0 already completed.")
