@@ -308,7 +308,8 @@ def acquire_dataset(args):
                     run_cmd(f"tar -xf {archive_path} -C {args.slakh_root} --strip-components=1")
             elif args.slakh_url:
                 archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
-                archive_path = args.workspace_root / archive_name
+                # Use persistent_root for the archive as well to leverage network volumes
+                archive_path = args.persistent_root / archive_name
                 logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
                 robust_download(args.slakh_url, archive_path)
                 logger.info("Extracting dataset...")
@@ -321,12 +322,13 @@ def acquire_dataset(args):
                 logger.error(" DATASET ACQUISITION FAILED")
                 logger.error("-" * 60)
                 logger.error(" No dataset found and no download source specified.")
-                logger.error(" To fix this, you have three options:")
-                logger.error(" 1. Run with the official Slakh2100 Redux URL (100GB):")
-                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1")
-                logger.error(" 2. Run with the 'Tiny' BabySlakh (0.3GB - faster for dev):")
+                logger.error(" If you hit a 'Disk quota exceeded' error, it means your pod's disk is too small.")
+                logger.error(" To fix this, you have two options:")
+                logger.error(" 1. Use the 'Tiny' BabySlakh (0.3GB - recommended for verification):")
                 logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1")
-                logger.error(" 3. Run a smoke test with mock data (fastest verification):")
+                logger.error(" 2. Run with the official Slakh2100 Redux URL (100GB - requires large disk/volume):")
+                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1")
+                logger.error(" 3. Run a smoke test with mock data (fastest):")
                 logger.error("    python scripts/runpod_run_all.py --smoke-test")
                 logger.error("=" * 60)
                 sys.exit(1)
@@ -478,7 +480,7 @@ def main():
     global logger
     parser = argparse.ArgumentParser(description="SoloMuse Autonomous RunPod Runner")
     # Global / Run Identity
-    parser.add_argument("--run-name", type=str, default=f"solomuse_run_{int(time.time())}")
+    parser.add_argument("--run-name", type=str, default="solomuse_v2_run")
     parser.add_argument("--dataset", type=str, default="slakh", help="slakh, mock")
     
     # Paths & Persistent Storage
