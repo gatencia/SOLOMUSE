@@ -31,7 +31,12 @@ class EnCodecAdapter(AudioCodec):
             import torch
             from encodec import EncodecModel
             # Instantiate model
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+            force_cpu = os.environ.get("SOLOMUSE_FORCE_CPU", "0") == "1"
+            if force_cpu:
+                self.device = torch.device('cpu')
+                logger.info("Forcing CPU for EnCodec (SOLOMUSE_FORCE_CPU=1)")
+            else:
+                self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
             self.model = EncodecModel.encodec_model_24khz()
             self.model.set_target_bandwidth(self.target_bandwidth)
             self.model.to(self.device)

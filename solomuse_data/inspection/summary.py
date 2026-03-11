@@ -49,7 +49,17 @@ class UnifiedSummaryExporter:
         """Compute metrics for a specific subset of the data."""
         total = len(data)
         if total == 0:
-            return {"subset": label, "count": 0}
+            return {
+                "subset": label,
+                "total_count": 0,
+                "counts": {
+                    "split_unknown": 0, "has_situation": 0, "has_intent_targets": 0, 
+                    "has_renderer_target": 0, "renderer_target_all_zero": 0, 
+                    "y_is_silent": 0, "suspicious_zero_renderer": 0, "clean_rows": 0
+                },
+                "split_distribution": {},
+                "distribution_stats": {}
+            }
 
         counts = {
             "split_unknown": 0,
@@ -58,8 +68,10 @@ class UnifiedSummaryExporter:
             "has_renderer_target": 0,
             "renderer_target_all_zero": 0,
             "y_is_silent": 0,
-            "suspicious_zero_renderer": 0, # zero renderer but NOT silent
-            "clean_rows": 0
+            "suspicious_zero_renderer": 0,
+            "clean_rows": 0,
+            "has_y_hat": 0,
+            "has_intent_pred": 0
         }
         
         splits = Counter()
@@ -70,7 +82,7 @@ class UnifiedSummaryExporter:
             if sp == "UNKNOWN": counts["split_unknown"] += 1
             
             for k in ["has_situation", "has_intent_targets", "has_renderer_target", 
-                      "renderer_target_all_zero", "y_is_silent"]:
+                      "renderer_target_all_zero", "y_is_silent", "has_y_hat", "has_intent_pred"]:
                 if r.get(k): counts[k] += 1
                 
             if r.get("renderer_target_all_zero") and not r.get("y_is_silent"):
@@ -205,10 +217,14 @@ class UnifiedSummaryExporter:
             # Header with some key metrics
             writer.writerow(["Subset", "Total", "Clean", "SplitUNKNOWN", "ZeroRenderer", "SilentY", "SuspiciousZero"])
             for label, metrics in summary_data["subsets"].items():
-                c = metrics["counts"]
+                c = metrics.get("counts", {})
                 writer.writerow([
-                    label, metrics["total_count"], c["clean_rows"], c["split_unknown"],
-                    c["renderer_target_all_zero"], c["y_is_silent"], c["suspicious_zero_renderer"]
+                    label, metrics.get("total_count", 0), 
+                    c.get("clean_rows", 0), 
+                    c.get("split_unknown", 0),
+                    c.get("renderer_target_all_zero", 0), 
+                    c.get("y_is_silent", 0), 
+                    c.get("suspicious_zero_renderer", 0)
                 ])
                 
         logger.info(f"Summary written to: {self.summary_out_dir}")
@@ -221,10 +237,12 @@ class UnifiedSummaryExporter:
         
         for label, metrics in summary_data["subsets"].items():
             c = metrics["counts"]
-            print(f"[{label.upper():<15}] Total: {metrics['total_count']:<6} | Clean: {c['clean_rows']:<6} | UNKNOWN Split: {c['split_unknown']}")
-            if label == "all" and metrics["total_count"] > 0:
-                 print(f"  Artifact Coverage: Situation={c['has_situation']} | Intent={c['has_intent_targets']} | Renderer={c['has_renderer_target']}")
-                 print(f"  Pathologies      : ZeroRenderer={c['renderer_target_all_zero']} | SilentY={c['y_is_silent']} | Suspicious={c['suspicious_zero_renderer']}")
+            total = metrics['total_count'] # Define total here for use in f-strings
+            print(f"[{label.upper():<15}] Total: {total:<6} | Clean: {c.get('clean_rows', 0):<6} | UNKNOWN Split: {c.get('split_unknown', 0)}")
+            if total > 0: # Only print detailed stats if there's data
+                print(f"  Artifact Coverage: Sit={c.get('has_situation', 0)} | IntTarget={c.get('has_intent_targets', 0)} | RenderTarget={c.get('has_renderer_target', 0)}")
+                print(f"  V2 Inference:      IntPred={c.get('has_intent_pred', 0)} | Y_Hat={c.get('has_y_hat', 0)}")
+                print(f"  Pathologies      : ZeroRenderer={c.get('renderer_target_all_zero', 0)} | SilentY={c.get('y_is_silent', 0)} | Suspicious={c.get('suspicious_zero_renderer', 0)}")
 
         integrity = summary_data["integrity"]
         print("\nINTEGRITY AUDIT:")

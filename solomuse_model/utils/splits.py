@@ -47,8 +47,12 @@ def create_track_grouped_splits(manifest_path: str | Path,
         logger.info(f"Loading existing persistent splits from {split_manifest_path}")
         split_df = pd.read_csv(split_manifest_path)
         
+        # Join with original df to ensure all columns (e.g., dataset, x_path) are preserved
+        # We join on segment_id and track_id
+        df = df.merge(split_df[['segment_id', 'track_id', 'split']], on=['segment_id', 'track_id'], how='inner')
+
         # Backward compatibility check: Are tracks leaked across splits?
-        track_splits = split_df.groupby("track_id")["split"].nunique()
+        track_splits = df.groupby("track_id")["split"].nunique()
         leaking_tracks = track_splits[track_splits > 1]
         
         if not leaking_tracks.empty:
@@ -57,7 +61,7 @@ def create_track_grouped_splits(manifest_path: str | Path,
             logger.warning("Pass `--force-regenerate-splits` to rebuild, or delete the file manually.")
             raise RuntimeError(f"Data leakage detected in existing split manifest: {split_manifest_path}")
             
-        return split_df
+        return df
 
     logger.info("Generating deterministic TRACK-GROUPED splits...")
     

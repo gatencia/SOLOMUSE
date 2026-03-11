@@ -59,7 +59,17 @@ class IntentDataset(Dataset):
                 intent_path = seg_dir / "intent_targets.npy"
                 
             if not situation_path.exists() or not intent_path.exists():
-                logger.error(f"Missing artifacts for segment {segment_id} at {seg_dir}")
+                print(f"DEBUG IntentDataset Error for segment_id={repr(segment_id)} track_id={repr(track_id)}")
+                print(f"  segments_root={repr(str(self.segments_root))}")
+                print(f"  dataset_name={repr(dataset_name)}")
+                print(f"  Calculated situation_path={repr(str(situation_path))} | Exists? {situation_path.exists()}")
+                print(f"  Calculated intent_path={repr(str(intent_path))} | Exists? {intent_path.exists()}")
+                if seg_dir.exists():
+                     print(f"  seg_dir exists. Contents: {os.listdir(seg_dir)}")
+                else:
+                     print(f"  seg_dir does NOT exist.")
+                     if seg_dir.parent.exists():
+                         print(f"  seg_dir.parent exists. Contents: {os.listdir(seg_dir.parent)}")
                 # Return zeros as fallback to prevent crash, though it ruins batching if unchecked. 
                 # Ideally we map a viable shape or filter these out in init.
                 # Since we don't know F here, we raise ValueError

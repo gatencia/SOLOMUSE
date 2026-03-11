@@ -196,7 +196,9 @@ class UnifiedArtifactExporter:
                     rows = [all_rows[indices[i]] for i in range(len(indices))]
         else:
             # Default 'report' action
-            if limit and limit < len(all_rows):
+            if target_ids:
+                rows = [r for r in all_rows if r["segment_id"] in target_ids]
+            elif limit and limit < len(all_rows):
                 np.random.seed(seed)
                 indices = np.random.choice(len(all_rows), limit, replace=False)
                 rows = [all_rows[i] for i in indices]
@@ -227,6 +229,7 @@ class UnifiedArtifactExporter:
                 "x_rms": "", "x_peak": "", "y_rms": "", "y_peak": "",
                 "intent_mse": "", "intent_cosine_sim": "",
                 "has_y_hat": 0, "y_hat_path": "", "y_hat_rms": "", "y_hat_peak": "", "y_hat_snr": "",
+                "has_y_hat_tokens": 0, "y_hat_tokens_path": "",
                 "intent_error": "", "renderer_quality_error": "",
                 "y_is_silent": 0, "renderer_target_all_zero": 0
             })
@@ -247,15 +250,16 @@ class UnifiedArtifactExporter:
                 item["y_is_silent"] = 1 if y_stats["rms"] < rms_threshold else 0
 
             # Artifact Stats
-            artifacts = {
+            artifacts_paths = {
                 "situation": seg_dir / "situation.npy",
                 "intent_targets": seg_dir / "intent_targets.npy",
                 "intent_pred": seg_dir / "intent_pred.npy",
                 "renderer_target": seg_dir / "renderer_target.npy",
-                "renderer_tokens": seg_dir / "renderer_tokens.npy"
+                "renderer_tokens": seg_dir / "renderer_tokens.npy",
+                "y_hat_tokens": seg_dir / "y_hat_tokens.npy"
             }
             
-            for name, path in artifacts.items():
+            for name, path in artifacts_paths.items():
                 stats = self._array_metrics(path)
                 item[f"has_{name}"] = stats["exists"]
                 item[f"{name}_path"] = str(path.relative_to(self.output_root)) if stats["exists"] else ""
@@ -270,7 +274,7 @@ class UnifiedArtifactExporter:
                     item["token_max_id"] = stats.get("token_max_id", "")
 
             # Intent Error Metrics
-            intent_errs = self._intent_error_metrics(artifacts["intent_targets"], artifacts["intent_pred"])
+            intent_errs = self._intent_error_metrics(artifacts_paths["intent_targets"], artifacts_paths["intent_pred"])
             item.update(intent_errs)
 
             # Audio output & Quality
@@ -329,7 +333,7 @@ class UnifiedArtifactExporter:
         elif action == "silence-audit":
             self._write_silence_results(report_data, output_path)
         elif action == "sanity-triples":
-            self._write_sanity_triples(report_data, artifacts, output_path)
+            self._write_sanity_triples(report_data, artifacts_paths, output_path)
         else:
             self._write_base_report(report_data, output_path)
             

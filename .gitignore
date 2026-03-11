@@ -50,3 +50,11 @@ downloads/
 # ---- Logs ----
 *.log
 logs/
+
+# ---- Reports ----
+reports/
+
+
+# ---- docs and readings ----
+pdfs/
+vendored_deps/
