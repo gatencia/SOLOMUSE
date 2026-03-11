@@ -352,7 +352,9 @@ def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str,
     """Helper to run a pipeline command using the venv python"""
     if not is_done(args.output_root, step_name):
         logger.info(f"Running step: {step_name}")
-        full_cmd = f"{python_bin} -m {cmd}"
+        # Explicitly set PYTHONPATH to the repository root so solomuse_model can be imported
+        repo_root = args.persistent_root / "repos" / "SOLOMUSE"
+        full_cmd = f"PYTHONPATH={repo_root} {python_bin} -m {cmd}"
         run_cmd(full_cmd, dry_run=args.dry_run)
         if not args.dry_run:
             mark_done(args.output_root, step_name)
