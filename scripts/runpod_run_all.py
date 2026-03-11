@@ -323,13 +323,23 @@ def package_outputs(args, config_path):
     logger.info(f"python -m solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir </path/to/segment>")
 
 def main():
+    # Environment Detection: Avoid hardcoded /workspace on local machines
+    workspace_exists = Path("/workspace").exists()
+    default_workspace = "/workspace" if workspace_exists else str(Path.cwd() / "workspace")
+    
+    persist_volume = Path("/runpod-volume")
+    if persist_volume.exists():
+        default_persist = "/runpod-volume"
+    elif workspace_exists:
+        default_persist = "/workspace"
+    else:
+        # Local development fallback
+        default_persist = str(Path.cwd() / "runpod_results")
+
     parser = argparse.ArgumentParser(description="SoloMuse RunPod Single-Click Pipeline Runner")
     parser.add_argument("--run-name", type=str, default=f"solomuse_run_{int(time.time())}", help="Unique run identifier")
     parser.add_argument("--dataset", type=str, default="slakh", help="Dataset slug (slakh, mock)")
-    parser.add_argument("--workspace-root", type=str, default="/workspace", help="Ephemeral workspace dir")
-    
-    # Resolve persistent root automatically for RunPod
-    default_persist = "/runpod-volume" if Path("/runpod-volume").exists() else "/workspace"
+    parser.add_argument("--workspace-root", type=str, default=default_workspace, help="Ephemeral workspace dir")
     parser.add_argument("--persistent-root", type=str, default=default_persist, help="Persistent storage volume")
     
     parser.add_argument("--slakh-archive", type=str, help="Path to local slakh zip/tar file")
@@ -347,7 +357,14 @@ def main():
     args.workspace_root = Path(args.workspace_root)
     
     args.output_root = args.persistent_root / "SOLOMUSE_RUNS" / args.run_name
-    args.output_root.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        args.output_root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to create output directory at {args.output_root}")
+        logger.error(f"Error: {e}")
+        logger.error("If running locally, ensure the path is writable or provide --persistent-root.")
+        sys.exit(1)
     
     args.slakh_root = args.persistent_root / "datasets" / "slakh2100"
     
