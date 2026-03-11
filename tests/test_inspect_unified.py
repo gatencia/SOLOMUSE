@@ -42,7 +42,7 @@ def mock_report_env():
             })
             
         # 2. Create Splits
-        split_path = seg_root.parent / "manifest_intent_splits.csv"
+        split_path = seg_root / "manifest_intent_splits.csv"
         with open(split_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["segment_id", "track_id", "split"])
             writer.writeheader()
@@ -76,8 +76,8 @@ def mock_report_env():
                 "track_id": track_id,
                 "segment_id": seg_id,
                 "start_s": 0.0,
-                "end_s": 1.0,
-                "duration_s": 1.0,
+                "end_s": 6.0,
+                "duration_s": 6.0,
                 "x_path": str(tmp_path / "x.wav"),
                 "y_path": str(tmp_path / "y.wav"),
                 "split": "train"
@@ -155,7 +155,7 @@ def test_unified_export_missing_files(mock_report_env):
     assert row["has_situation"] == 0
     assert row["situation_path"] == ""
     assert "Missing situation" in row["notes"]
-    assert row["alignment_ok"] == 1 # Intent still matches
+    assert row["alignment_ok"] == 0 # Situation is missing
 
 def test_unified_export_alignment_error(mock_report_env):
     cfg, dataset, seg_id, seg_dir = mock_report_env
@@ -226,9 +226,9 @@ def test_sanity_triples_balanced(mock_report_env):
     manifest_path = seg_dir.parent / "manifest.csv"
     with open(manifest_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([dataset, "TrackA", seg2_id, 1.0, 2.0, 1.0, "x.wav", "y.wav"])
+        writer.writerow([dataset, "TrackA", seg2_id, 1.0, 2.0, 1.0, "x.wav", "y.wav", "test"])
         
-    split_path = seg_dir.parent / "manifest_intent_splits.csv"
+    split_path = seg_dir.parent.parent / "manifest_intent_splits.csv"
     with open(split_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([seg2_id, "TrackA", "test"])

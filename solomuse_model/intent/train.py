@@ -149,11 +149,7 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     save_crash_batches = getattr(cfg, "intent_debug_save_crash_batches", True)
     
     # 1. Datasets & Loaders
-    try:
-        train_loader, val_loader, test_loader = build_intent_dataloaders(cfg, dataset_name)
-    except Exception as e:
-        logger.error(f"Failed to initialize datasets: {e}")
-        return
+    train_loader, val_loader, test_loader = build_intent_dataloaders(cfg, dataset_name)
 
     num_train_batches = len(train_loader)
     num_val_batches = len(val_loader)
@@ -199,7 +195,7 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     if cfg.intent_model_type.lower() == "gru":
         model = IntentPlannerGRU_V1(
             input_dim=32, # Situation V1
-            hidden_dim=cfg.intent_hidden_dim,
+            hidden_dim=cfg.intent_d_model,
             num_layers=cfg.intent_num_layers,
             output_dim=7, # Intent D=7
             dropout=cfg.intent_dropout
@@ -207,9 +203,10 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
     elif cfg.intent_model_type.lower() == "transformer":
         model = IntentPlannerTransformer_V2(
             input_dim=32,
-            hidden_dim=cfg.intent_hidden_dim,
+            hidden_dim=cfg.intent_d_model,
             num_layers=cfg.intent_num_layers,
-            nhead=8, # Strict 8-head assumption for robustness
+            nhead=cfg.intent_num_heads,
+            ffn_dim=cfg.intent_ffn_dim,
             output_dim=7,
             dropout=cfg.intent_dropout
         ).to(device)
@@ -219,11 +216,45 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
         
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Initialized {model.__class__.__name__} with {num_params:,} trainable parameters.")
-    logger.info(f"  - Hidden Dim: {cfg.intent_hidden_dim}")
-    logger.info(f"  - Layers: {cfg.intent_num_layers}")
     
-    weight_decay = getattr(cfg, "intent_weight_decay", 1e-5)
+    # Detailed Training Setup Block
+    logger.info("=" * 40)
+    logger.info("  INTENT TRAINING HYPERPARAMETERS")
+    logger.info("-" * 40)
+    logger.info(f"  Model Type:    {cfg.intent_model_type}")
+    logger.info(f"  D_Model:       {cfg.intent_d_model}")
+    logger.info(f"  Num Layers:    {cfg.intent_num_layers}")
+    if cfg.intent_model_type.lower() == "transformer":
+        logger.info(f"  Num Heads:     {cfg.intent_num_heads}")
+        logger.info(f"  FFN Dim:       {cfg.intent_ffn_dim}")
+    logger.info(f"  Dropout:       {cfg.intent_dropout}")
+    logger.info(f"  Batch Size:    {cfg.intent_batch_size}")
+    logger.info(f"  Learning Rate: {cfg.intent_lr}")
+    logger.info(f"  Weight Decay:  {cfg.intent_weight_decay}")
+    logger.info(f"  Grad Clip:     {cfg.intent_grad_clip}")
+    logger.info(f"  LR Schedule:   {cfg.intent_lr_schedule}")
+    logger.info(f"  Warmup Steps:  {cfg.intent_warmup_steps}")
+    logger.info(f"  Epochs:        {cfg.intent_epochs}")
+    logger.info("=" * 40)
+    
+    weight_decay = cfg.intent_weight_decay
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.intent_lr, weight_decay=weight_decay)
+    
+    # Scheduler Setup
+    num_training_steps = num_train_batches * cfg.intent_epochs
+    if cfg.intent_lr_schedule == "cosine":
+        from torch.optim.lr_scheduler import LambdaLR
+        def lr_lambda(current_step):
+            if current_step < cfg.intent_warmup_steps:
+                return float(current_step) / float(max(1, cfg.intent_warmup_steps))
+            progress = float(current_step - cfg.intent_warmup_steps) / float(
+                max(1, num_training_steps - cfg.intent_warmup_steps)
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        scheduler = LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
+        
     criterion = nn.MSELoss()
     
     # 4. Tracker Setup
@@ -310,6 +341,8 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
                 else:
                     optimizer.step()
                 
+                scheduler.step()
+                
                 # Check model params finite
                 for name, param in model.named_parameters():
                     if not torch.isfinite(param).all():
@@ -332,7 +365,7 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
                         "backend": str(device),
                         "learning_rate": optimizer.param_groups[0]['lr'],
                         "grad_clip": getattr(cfg, "intent_grad_clip", 1.0),
-                        "weight_decay": getattr(cfg, "intent_weight_decay", 1e-5),
+                        "weight_decay": cfg.intent_weight_decay,
                         "segment_ids": segment_ids,
                         "track_ids": track_ids,
                         "gradients": grad_info,
@@ -371,9 +404,16 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
                     logger.error("❌ Fatal boundary reached. Aborting training.")
                     raise RuntimeError(f"Training crashed at Epoch {epoch+1} Batch {batch_idx}: {str(e)}") from e
             
+            # Since I'm using replace_file_content for a contiguous block, 
+            # I must include the actual code I want to keep if it's within the range.
+            # But wait, I can just replace the specific lines.
+            
             train_loss += loss.item() * X.size(0)
             training_steps_executed += 1
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            pbar.set_postfix({
+                "loss": f"{loss.item():.4f}", 
+                "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
+            })
             
         if bad_batches_this_epoch > 0 and skip_bad_batches:
             logger.warning(f"Epoch {epoch+1} stats: skipped {bad_batches_this_epoch} bad batches.")

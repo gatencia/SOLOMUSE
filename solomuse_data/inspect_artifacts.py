@@ -251,9 +251,8 @@ class ArtifactInspector:
         idx = np.random.choice(len(segs), min(sample_size, len(segs)), replace=False)
         sampled = [segs[i] for i in idx]
         
-        out_dir = Path("experiments") / "inspection_decodes"
-        import subprocess
-        subprocess.run(f"mkdir -p {out_dir}", shell=True)
+        out_dir = Path(self.cfg.output_root) / "experiments" / "inspection_decodes"
+        out_dir.mkdir(parents=True, exist_ok=True)
         
         if self.cfg.renderer_representation == "wavechunk":
             codec = WaveChunkCodec(frame_ms=self.cfg.renderer_frame_ms, hop_ms=self.cfg.renderer_hop_ms, target_sr=self.cfg.canonical_sample_rate)
@@ -269,6 +268,7 @@ class ArtifactInspector:
             target_path = seg / "renderer_target.npy"
             
             try:
+                print(f"DEBUG: Processing {target_path} exists? {target_path.exists()}")
                 arr = np.load(target_path)
                 
                 # Decode [F, chunk] -> [Samples, C]  (Mono baseline)

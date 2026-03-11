@@ -14,7 +14,7 @@ def test_renderer_nan_input_guard(tmp_path):
     
     seg_dir = tmp_path / "segments" / "test_ds"
     seg_dir.mkdir(parents=True)
-    (seg_dir / "manifest_renderer.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
+    (seg_dir / "manifest_renderer_splits.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
     
     with patch("solomuse_model.renderer.train.DataLoader") as mock_dl:
         mock_dl.return_value = [
@@ -43,7 +43,7 @@ def test_renderer_nan_prediction_guard(tmp_path):
     
     seg_dir = tmp_path / "segments" / "test_ds"
     seg_dir.mkdir(parents=True)
-    (seg_dir / "manifest_renderer.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
+    (seg_dir / "manifest_renderer_splits.csv").write_text("dataset,track_id,segment_id,split\ntest_ds,T1,S1,train\n")
     
     with patch("solomuse_model.renderer.train.DataLoader") as mock_dl:
         mock_dl.return_value = [

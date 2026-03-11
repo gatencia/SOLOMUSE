@@ -52,12 +52,8 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
         return
 
     # 2. Datasets
-    try:
-        train_ds = RendererDataset(str(split_manifest_path), split="train")
-        val_ds = RendererDataset(str(split_manifest_path), split="val")
-    except Exception as e:
-        logger.error(f"Failed to load Renderer datasets: {e}")
-        return
+    train_ds = RendererDataset(str(split_manifest_path), split="train")
+    val_ds = RendererDataset(str(split_manifest_path), split="val")
 
     if len(train_ds) == 0:
         logger.warning("Empty training dataset. Aborting.")

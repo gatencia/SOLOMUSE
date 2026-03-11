@@ -104,6 +104,12 @@ def main():
     train_intent_parser.add_argument("--intent-overfit-one-batch", action="store_true", help="Overfit on a single batch for testing")
     train_intent_parser.add_argument("--intent-epochs", type=int, help="Epochs override")
     train_intent_parser.add_argument("--intent-batch-size", type=int, help="Batch size override")
+    train_intent_parser.add_argument("--intent-lr", type=float, help="Learning rate override")
+    train_intent_parser.add_argument("--intent-d-model", type=int, help="Model dimension override")
+    train_intent_parser.add_argument("--intent-num-layers", type=int, help="Number of layers override")
+    train_intent_parser.add_argument("--intent-num-heads", type=int, help="Number of heads override")
+    train_intent_parser.add_argument("--intent-ffn-dim", type=int, help="FFN dimension override")
+    train_intent_parser.add_argument("--intent-dropout", type=float, help="Dropout override")
 
     eval_intent_parser = subparsers.add_parser("eval-intent", parents=[parent_parser], help="Evaluate Layer 2: Baseline Intent Planner")
     eval_intent_parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train, val, test, all)")
@@ -134,6 +140,12 @@ def main():
     train_ren_v2_parser = subparsers.add_parser("train-renderer-v2", parents=[parent_parser], help="Train Layer 3: Transformer Token LM Renderer (V2)")
     train_ren_v2_parser.add_argument("--renderer-batch-size", type=int, help="Batch size override")
     train_ren_v2_parser.add_argument("--renderer-epochs", type=int, help="Epochs override")
+    train_ren_v2_parser.add_argument("--renderer-lr", type=float, help="Learning rate override")
+    train_ren_v2_parser.add_argument("--renderer-d-model", type=int, help="Model dimension override")
+    train_ren_v2_parser.add_argument("--renderer-num-layers", type=int, help="Number of layers override")
+    train_ren_v2_parser.add_argument("--renderer-num-heads", type=int, help="Number of heads override")
+    train_ren_v2_parser.add_argument("--renderer-ffn-dim", type=int, help="FFN dimension override")
+    train_ren_v2_parser.add_argument("--renderer-dropout", type=float, help="Dropout override")
     
     render_seg_parser = subparsers.add_parser("render-segment", parents=[parent_parser], help="Render offline segment")
     render_seg_parser.add_argument("--segment-dir", type=str, required=True, help="Path to segment")
@@ -239,6 +251,18 @@ def main():
             cfg.intent_epochs = args.intent_epochs
         if getattr(args, "intent_batch_size", None):
             cfg.intent_batch_size = args.intent_batch_size
+        if getattr(args, "intent_lr", None) is not None:
+            cfg.intent_lr = args.intent_lr
+        if getattr(args, "intent_d_model", None) is not None:
+            cfg.intent_d_model = args.intent_d_model
+        if getattr(args, "intent_num_layers", None) is not None:
+            cfg.intent_num_layers = args.intent_num_layers
+        if getattr(args, "intent_num_heads", None) is not None:
+            cfg.intent_num_heads = args.intent_num_heads
+        if getattr(args, "intent_ffn_dim", None) is not None:
+            cfg.intent_ffn_dim = args.intent_ffn_dim
+        if getattr(args, "intent_dropout", None) is not None:
+            cfg.intent_dropout = args.intent_dropout
             
         from solomuse_model.intent.train import run_train_intent
         run_train_intent(cfg, args.dataset)
@@ -314,6 +338,18 @@ def main():
             cfg.renderer_batch_size = args.renderer_batch_size
         if getattr(args, "renderer_epochs", None) is not None:
             cfg.renderer_epochs = args.renderer_epochs
+        if getattr(args, "renderer_lr", None) is not None:
+            cfg.renderer_lr = args.renderer_lr
+        if getattr(args, "renderer_d_model", None) is not None:
+            cfg.renderer_d_model = args.renderer_d_model
+        if getattr(args, "renderer_num_layers", None) is not None:
+            cfg.renderer_num_layers = args.renderer_num_layers
+        if getattr(args, "renderer_num_heads", None) is not None:
+            cfg.renderer_num_heads = args.renderer_num_heads
+        if getattr(args, "renderer_ffn_dim", None) is not None:
+            cfg.renderer_ffn_dim = args.renderer_ffn_dim
+        if getattr(args, "renderer_dropout", None) is not None:
+            cfg.renderer_dropout = args.renderer_dropout
             
         from solomuse_model.renderer.train_v2 import run_train_renderer_v2
         run_train_renderer_v2(cfg, args.dataset)

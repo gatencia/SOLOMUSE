@@ -56,29 +56,57 @@ def run_train_renderer_v2(cfg: PipelineConfig, dataset_name: str):
         logger.warning("Apple Silicon MPS selected, but bypassed to CPU natively due to fatal PyTorch Causal Masking bus errors.")
     logger.info(f"Using device: {device}")
     
-    # Codec hyperparameters (hardcoded for Encodec 24kHz @ 6kbps for now)
     num_codebooks = 4
     vocab_size = 1024
     
     model = TokenTransformerRenderer(
-        d_model=cfg.renderer_hidden_dim, 
-        nhead=8, 
-        num_layers=3, 
+        d_model=cfg.renderer_d_model, 
+        nhead=cfg.renderer_num_heads, 
+        num_layers=cfg.renderer_num_layers,
+        ffn_dim=cfg.renderer_ffn_dim,
         num_codebooks=num_codebooks, 
-        vocab_size=vocab_size
+        vocab_size=vocab_size,
+        dropout=cfg.renderer_dropout
     ).to(device)
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.renderer_lr)
+    # Detailed Training Setup Block
+    logger.info("=" * 40)
+    logger.info("  RENDERER V2 TRAINING HYPERPARAMETERS")
+    logger.info("-" * 40)
+    logger.info(f"  Model Type:    {cfg.renderer_model_type}")
+    logger.info(f"  D_Model:       {cfg.renderer_d_model}")
+    logger.info(f"  Num Layers:    {cfg.renderer_num_layers}")
+    logger.info(f"  Num Heads:     {cfg.renderer_num_heads}")
+    logger.info(f"  FFN Dim:       {cfg.renderer_ffn_dim}")
+    logger.info(f"  Dropout:       {cfg.renderer_dropout}")
+    logger.info(f"  Batch Size:    {cfg.renderer_batch_size}")
+    logger.info(f"  Learning Rate: {cfg.renderer_lr}")
+    logger.info(f"  Weight Decay:  {cfg.renderer_weight_decay}")
+    logger.info(f"  Grad Clip:     {cfg.renderer_grad_clip}")
+    logger.info(f"  LR Schedule:   {cfg.renderer_lr_schedule}")
+    logger.info(f"  Warmup Steps:  {cfg.renderer_warmup_steps}")
+    logger.info(f"  Epochs:        {cfg.renderer_epochs}")
+    logger.info("=" * 40)
     
-    # Ignore index 0 if it's reserved for padding, but EnCodec output is often 0-indexed.
-    # Dataset token_collate_fn uses 0 for sequence padding.
-    # To truly learn all valid EnCodec tokens (0-1023), 0 cannot be the pad_token logically.
-    # However, since we'll predict using sequence lengths natively we won't strictly enforce ignore_index=0
-    # unless we offset all tokens by +1, which is a good standard approach:
-    # A true padding token offset is required if sequence lengths vary wildly.
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.renderer_lr, weight_decay=cfg.renderer_weight_decay)
     
+    # Scheduler Setup
+    num_training_steps = len(train_loader) * cfg.renderer_epochs
+    if cfg.renderer_lr_schedule == "cosine":
+        from torch.optim.lr_scheduler import LambdaLR
+        import math
+        def lr_lambda(current_step):
+            if current_step < cfg.renderer_warmup_steps:
+                return float(current_step) / float(max(1, cfg.renderer_warmup_steps))
+            progress = float(current_step - cfg.renderer_warmup_steps) / float(
+                max(1, num_training_steps - cfg.renderer_warmup_steps)
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        scheduler = LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
+        
     # Standard cross entropy for language modeling
-    # expects (N, C, d1) where C = classes. We have [B, T, Q, Vocab] -> requires reshape.
     criterion = nn.CrossEntropyLoss()
     
     # 3. Training Loop
@@ -137,9 +165,13 @@ def run_train_renderer_v2(cfg: PipelineConfig, dataset_name: str):
             grad_clip = getattr(cfg, "renderer_grad_clip", 1.0)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
+            scheduler.step()
             
-            train_loss += loss.item() * x_tokens.size(0)
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            train_loss += x_tokens.size(0) * loss.item()
+            pbar.set_postfix({
+                "loss": f"{loss.item():.4f}",
+                "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
+            })
             
         train_loss /= len(train_ds)
         

@@ -68,18 +68,23 @@ class PipelineConfig(BaseModel):
 
     # --- Baseline Intent Planner (Training/Inference) ---
     intent_model_type: str = "gru"
-    intent_hidden_dim: int = 128
+    intent_hidden_dim: int = 128 # Legacy alias for intent_d_model
+    intent_d_model: int = 256
     intent_num_layers: int = 2
+    intent_num_heads: int = 8
+    intent_ffn_dim: int = 1024
     intent_dropout: float = 0.1
-    intent_lr: float = 1e-4
-    intent_grad_clip: float = 0.5
-    intent_epochs: int = 20
+    intent_lr: float = 3e-4 # Updated default
+    intent_weight_decay: float = 1e-2 # Updated default
+    intent_grad_clip: float = 1.0 # Updated default
+    intent_epochs: int = 50 # Updated default
     intent_batch_size: int = 16
+    intent_warmup_steps: int = 2000
+    intent_lr_schedule: str = "cosine" # "constant", "cosine"
     intent_checkpoint_path: str | None = None
     intent_overfit_one_batch: bool = False
     
     # --- Intent Training Stability & Debugging ---
-    intent_weight_decay: float = 1e-5
     intent_skip_bad_batches: bool = False
     intent_max_bad_batches_per_epoch: int = 0
     intent_fail_on_nonfinite_input: bool = True
@@ -103,14 +108,27 @@ class PipelineConfig(BaseModel):
     
     # --- Renderer Network (Training/Inference) ---
     renderer_model_type: str = "conv1d"
-    renderer_hidden_dim: int = 128
-    renderer_lr: float = 3e-4 # Reduced for numerical stability
+    renderer_hidden_dim: int = 128 # Legacy alias for renderer_d_model
+    renderer_d_model: int = 768
+    renderer_num_layers: int = 6 # Bumped default
+    renderer_num_heads: int = 12
+    renderer_ffn_dim: int = 3072
+    renderer_lr: float = 2e-4 # Updated default
+    renderer_weight_decay: float = 1e-2 # Updated default
     renderer_grad_clip: float = 1.0
-    renderer_epochs: int = 20
+    renderer_epochs: int = 100 # Updated default
     renderer_batch_size: int = 8
+    renderer_warmup_steps: int = 5000
+    renderer_lr_schedule: str = "cosine"
+    renderer_dropout: float = 0.1
     renderer_checkpoint_path: str | None = None
     renderer_overfit_one_batch: bool = False
     overlap_add_enable: bool = True
+
+    # --- Inference Sampling (Layer 3) ---
+    inference_temperature: float = 0.9
+    inference_top_k: int = 50
+    inference_top_p: float = 0.95
     
     # --- W&B Experiment Tracking ---
     wandb_enabled: bool = False
@@ -206,6 +224,22 @@ class PipelineConfig(BaseModel):
             if key not in KNOWN_DATASETS:
                 raise ValueError(f"Unknown dataset '{key}'. Must be one of {KNOWN_DATASETS}")
         return v
+
+    @model_validator(mode='after')
+    def sync_hyperparam_aliases(self):
+        # Sync Intent defaults/aliases
+        if self.intent_hidden_dim != 128 and self.intent_d_model == 256:
+            self.intent_d_model = self.intent_hidden_dim
+        elif self.intent_d_model != 256:
+            self.intent_hidden_dim = self.intent_d_model
+            
+        # Sync Renderer defaults/aliases
+        if self.renderer_hidden_dim != 128 and self.renderer_d_model == 768:
+            self.renderer_d_model = self.renderer_hidden_dim
+        elif self.renderer_d_model != 768:
+            self.renderer_hidden_dim = self.renderer_d_model
+            
+        return self
 
     @model_validator(mode='after')
     def validate_segments(self):

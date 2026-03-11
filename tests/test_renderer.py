@@ -86,7 +86,7 @@ def test_streaming_loop_runs_on_short_synthetic_audio(tmp_path):
     
     # Bypass librosa test-cache bug for streaming
     pl.summarize_situation = lambda x: np.zeros(32, dtype=np.float32)
-    pl.plan_intent = lambda sit, duration_s=1.0: np.zeros((int(duration_s * cfg.intent_hz), 7), dtype=np.float32)
+    pl.plan_intent = lambda sit, duration_s=1.0: np.zeros((int(duration_s * 100), 7), dtype=np.float32)
     
     runner = LiveSimulationRunner(pl)
     

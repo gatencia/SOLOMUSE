@@ -10,14 +10,16 @@ class TokenTransformerRenderer(nn.Module):
     Conditioned on backing tokens (x), continuous intent, and situation vector.
     """
     def __init__(self, d_model: int = 512, nhead: int = 8, num_layers: int = 6, 
+                 ffn_dim: int = 2048,
                  num_codebooks: int = 4, vocab_size: int = 1024, 
-                 d_intent: int = 7, d_situation: int = 32):
+                 d_intent: int = 7, d_situation: int = 32,
+                 dropout: float = 0.1):
         super().__init__()
         
         self.d_model = d_model
         self.num_codebooks = num_codebooks
         self.vocab_size = vocab_size
-
+ 
         # --- Embedders ---
         self.x_embedder = MultiCodebookEmbedding(num_codebooks, vocab_size, d_model)
         self.y_embedder = MultiCodebookEmbedding(num_codebooks, vocab_size, d_model)
@@ -30,7 +32,7 @@ class TokenTransformerRenderer(nn.Module):
         
         # --- Transformer Core ---
         decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, 
-                                                   dim_feedforward=d_model*4, dropout=0.1, 
+                                                   dim_feedforward=ffn_dim, dropout=dropout, 
                                                    batch_first=True)
         self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         

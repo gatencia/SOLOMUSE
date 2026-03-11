@@ -38,6 +38,7 @@ class IntentPlannerTransformer_V2(nn.Module):
                  hidden_dim: int = 128, 
                  num_layers: int = 2, 
                  nhead: int = 8,
+                 ffn_dim: int = 512,
                  output_dim: int = 7, 
                  dropout: float = 0.1):
         super().__init__()
@@ -52,7 +53,7 @@ class IntentPlannerTransformer_V2(nn.Module):
         encoder_layers = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=nhead,
-            dim_feedforward=hidden_dim * 4,
+            dim_feedforward=ffn_dim,
             dropout=dropout,
             batch_first=True # We will process [B, T, D] natively
         )

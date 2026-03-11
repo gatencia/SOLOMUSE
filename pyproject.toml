@@ -19,7 +19,11 @@ dependencies = [
     "tqdm",
     "resampy",
     "pyyaml",
-    "librosa"
+    "librosa",
+    "torch",
+    "torchaudio",
+    "wandb",
+    "matplotlib"
 ]
 
 [project.optional-dependencies]
@@ -34,4 +38,4 @@ dev = [
 solomuse-data = "solomuse_data.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["solomuse_data*"]
+include = ["solomuse_data*", "solomuse_model*"]

@@ -97,7 +97,7 @@ def test_infer_returns_expected_shape():
     # passing no checkpoint sets ready=True for uninitialized inference.
     from unittest.mock import patch
     with patch("pathlib.Path.exists", return_value=True):
-        with patch("torch.load", return_value={}):
+        with patch("torch.load", return_value={"model_state_dict": {}}):
             with patch("solomuse_model.intent.model_v1.IntentPlannerGRU_V1.load_state_dict"):
                 inferencer = IntentInferencer(cfg, checkpoint_path=None)
     

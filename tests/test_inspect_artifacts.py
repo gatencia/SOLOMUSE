@@ -18,7 +18,7 @@ def mock_cfg():
 
 @pytest.fixture
 def mock_segment_dir(tmp_path):
-    seg_dir = tmp_path / "segments" / "test_dataset" / "Track001" / "Track001_0"
+    seg_dir = tmp_path / "segments" / "test_dataset" / "Track00007" / "Track00007_264600"
     seg_dir.mkdir(parents=True)
     return tmp_path, seg_dir
 
@@ -70,7 +70,8 @@ def test_decode_output_written(mock_wav_write, mock_decode, mock_cfg, mock_segme
     # We must mock output path resolution
     with patch("solomuse_model.paths.get_renderer_checkpoint_path", return_value="fake.pt"):
         inspector = ArtifactInspector(mock_cfg, "test_dataset")
-        inspector.run_decode(sample_size=1)
+        assert (seg_dir / "renderer_target.npy").exists()
+        inspector.run_decode(sample_size=10)
         
-        captured = capsys.readouterr().out
-        assert "Decoded Track001_0 Target ->" in captured
+        out_wav = tmp_path / "experiments" / "inspection_decodes" / "decoded_Track00007_264600.wav"
+        assert out_wav.exists()

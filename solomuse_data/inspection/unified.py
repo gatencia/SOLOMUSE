@@ -185,7 +185,7 @@ class UnifiedArtifactExporter:
                     
                     rows = []
                     np.random.seed(seed)
-                    per_split = num_samples // max(1, len(by_split))
+                    per_split = max(1, num_samples // max(1, len(by_split)))
                     for sp, split_rows in by_split.items():
                         if not split_rows: continue
                         indices = np.random.choice(len(split_rows), min(per_split, len(split_rows)), replace=False)
