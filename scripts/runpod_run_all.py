@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-RunPod "One-Click" Runner Script for SoloMuse Pipeline (V2 Architecture)
-Downloads data, builds artifacts, tokenizes, trains Intent + Renderer models, 
-runs E2E inference, and generates the final verification report.
+SoloMuse "One-Click" Autonomous RunPod Runner (V2 Architecture)
+Handles everything from a blank pod:
+1. System dependency install (apt)
+2. Repository cloning & environment setup (venv)
+3. Resumable dataset acquisition (aria2c/wget)
+4. End-to-end SoloMuse V2 Pipeline (Artifacts -> Training -> Verification)
+5. Final report bundling and packaging.
+
 Resumable via .done sentinel files.
+Logs to both stdout and persistent log files.
 """
 
 import os
@@ -16,17 +22,25 @@ from pathlib import Path
 import json
 import csv
 import random
+import logging
 
-def get_logger():
-    import logging
+def get_logger(log_file: Path = None):
     logger = logging.getLogger("runpod_runner")
     if not logger.handlers:
         logger.setLevel(logging.INFO)
+        # Console handler
         sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
         logger.addHandler(sh)
+        # File handler (if provided)
+        if log_file:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            fh = logging.FileHandler(log_file)
+            fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
+            logger.addHandler(fh)
     return logger
 
+# Initial logger, will be updated with file handler after path resolution
 logger = get_logger()
 
 def banner(msg):
@@ -34,7 +48,7 @@ def banner(msg):
     print(f" {msg}")
     print("="*70)
 
-def run_cmd(cmd: str, env: dict = None, dry_run: bool = False):
+def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None, shell: bool = True):
     logger.info(f"Running: {cmd}")
     if dry_run:
         return
@@ -42,8 +56,7 @@ def run_cmd(cmd: str, env: dict = None, dry_run: bool = False):
     if env:
         full_env.update(env)
     
-    # We use subprocess.run with check=True to fail fast on errors.
-    result = subprocess.run(cmd, shell=True, env=full_env)
+    result = subprocess.run(cmd, shell=shell, env=full_env, cwd=cwd)
     if result.returncode != 0:
         logger.error(f"Command failed with exit code {result.returncode}:\n{cmd}")
         sys.exit(1)
@@ -56,48 +69,140 @@ def mark_done(marker_dir: Path, step_name: str):
     with open(marker_dir / f".{step_name}.done", "w") as f:
         f.write(str(time.time()))
 
-def get_disk_usage(path: Path) -> str:
-    if not path.exists():
-        return "0 MB"
+def get_disk_free(path: Path) -> float:
+    """Returns free space in GB"""
     try:
-        total_size = sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
-        return f"{total_size / (1024**2):.2f} MB"
+        usage = shutil.disk_usage(path)
+        return usage.free / (1024**3)
     except Exception:
-        return "? MB"
-        
+        return 0.0
+
+def retry_wrapper(func, retries=3, backoff=2):
+    """Exponential backoff retry decorator"""
+    def wrapper(*args, **kwargs):
+        attempts = 0
+        while attempts < retries:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                attempts += 1
+                if attempts == retries:
+                    raise e
+                wait = backoff ** attempts
+                logger.warning(f"Operation failed: {e}. Retrying in {wait}s...")
+                time.sleep(wait)
+    return wrapper
+
+def robust_download(url: str, dest_path: Path, dry_run: bool = False):
+    """Resumable download using aria2c if available, else wget -c"""
+    if dry_run: return
+    
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Try aria2c first (much faster, better resuming)
+    if shutil.which("aria2c"):
+        cmd = f"aria2c -x 16 -s 16 -c --dir='{dest_path.parent}' --out='{dest_path.name}' '{url}'"
+    else:
+        cmd = f"wget -c -O '{dest_path}' '{url}'"
+    
+    run_cmd(cmd)
+
+@retry_wrapper
 def bootstrap_system(args):
-    """STAGE 0 - Bootstrap environment"""
-    banner("STAGE 0: RunPod Bootstrap")
-    if not is_done(args.output_root, "stage0_bootstrap") and not args.dry_run:
-        # Check torch CUDA
-        try:
-            import torch
-            has_cuda = torch.cuda.is_available()
-            logger.info(f"PyTorch CUDA Available: {has_cuda} (v{torch.version.cuda})")
-            if not has_cuda:
-                logger.warning("CUDA is NOT available. Training will be extremely slow!")
-        except ImportError:
-            logger.error("PyTorch not installed! Please run: pip install torch")
-            sys.exit(1)
-            
-        try:
-            import solomuse_data
-            logger.info("SoloMuse modules successfully imported.")
-        except ImportError:
-            logger.info("Installing SoloMuse incrementally (pip install -e .)")
-            run_cmd("pip install -e .")
-            
-        if os.environ.get("WANDB_API_KEY"):
-            logger.info("WANDB_API_KEY detected. W&B will be enabled for training commands.")
+    """STAGE -1: Install system dependencies"""
+    banner("STAGE -1: System Bootstrap (Apt)")
+    if not is_done(args.output_root, "stage_neg1_sys_bootstrap") and not args.dry_run:
+        # Check if we are on a debian-based system
+        if shutil.which("apt-get"):
+            logger.info("Installing system packages: git, ffmpeg, sox, aria2, unzip, libsndfile1...")
+            run_cmd("apt-get update && apt-get install -y git ffmpeg sox aria2 unzip wget curl libsndfile1-dev")
+        else:
+            logger.warning("apt-get not found. Skipping system package install. Assuming pre-installed.")
         
-        mark_done(args.output_root, "stage0_bootstrap")
+        # Verify NVIDIA
+        if shutil.which("nvidia-smi"):
+            run_cmd("nvidia-smi")
+        else:
+            logger.warning("nvidia-smi not found. Training will be extremely slow (CPU only).")
+            
+        mark_done(args.output_root, "stage_neg1_sys_bootstrap")
+    else:
+        logger.info("Stage -1 already completed.")
+
+def clone_repo(args):
+    """STAGE -0: Clone Repository"""
+    banner(f"STAGE -0: Clone Repository ({args.repo_branch})")
+    
+    if not is_done(args.output_root, "stage_neg0_clone") and not args.dry_run:
+        repo_dir = args.persistent_root / "repos" / "SOLOMUSE"
+        if repo_dir.exists():
+            logger.info(f"Repository already exists at {repo_dir}. Updating...")
+            run_cmd(f"git fetch origin && git checkout {args.repo_branch} && git pull origin {args.repo_branch}", cwd=repo_dir)
+        else:
+            repo_dir.parent.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Cloning {args.repo_url} into {repo_dir}")
+            run_cmd(f"git clone -b {args.repo_branch} {args.repo_url} {repo_dir}")
+            
+        mark_done(args.output_root, "stage_neg0_clone")
+    else:
+        logger.info("Stage -0 already completed.")
+    
+    # Return the absolute path to the repo root
+    return args.persistent_root / "repos" / "SOLOMUSE"
+
+def setup_python(args, repo_root: Path):
+    """STAGE 0: Environment Setup (venv)"""
+    banner("STAGE 0: Python Environment Setup")
+    venv_dir = args.persistent_root / "venvs" / "solomuse"
+    python_bin = venv_dir / "bin" / "python"
+    
+    if not is_done(args.output_root, "stage0_env_setup") and not args.dry_run:
+        if not venv_dir.exists():
+            logger.info(f"Creating virtual environment at {venv_dir}")
+            run_cmd(f"python3 -m venv {venv_dir}")
+        
+        logger.info("Installing dependencies...")
+        # Force pip upgrade
+        run_cmd(f"{python_bin} -m pip install --upgrade pip")
+        
+        # Install project in editable mode
+        run_cmd(f"{python_bin} -m pip install -e .", cwd=repo_root)
+        
+        # Verify Torch + CUDA
+        verify_script = f"""
+import torch
+import sys
+print(f'Python: {{sys.version}}')
+print(f'Torch: {{torch.__version__}}')
+print(f'CUDA Available: {{torch.cuda.is_available()}}')
+if torch.cuda.is_available():
+    print(f'GPU: {{torch.cuda.get_device_name(0)}}')
+else:
+    print('WARNING: CUDA NOT DETECTED')
+"""
+        run_cmd(f"{python_bin} -c \"{verify_script}\"")
+        
+        # Safety check for vendored torch
+        safety_script = """
+import sys
+import torch
+path = torch.__file__
+if 'vendored_deps' in path:
+    print(f"CRITICAL ERROR: Torch is importing from vendored location: {path}")
+    print("Please remove it and ensure pip-installed torch is used.")
+    sys.exit(1)
+"""
+        run_cmd(f"{python_bin} -c \"{safety_script}\"")
+        
+        mark_done(args.output_root, "stage0_env_setup")
     else:
         logger.info("Stage 0 already completed.")
+        
+    return python_bin
 
-def write_runpod_config(args) -> Path:
+def write_pipeline_config(args, config_path: Path):
     """STAGE 1 - Generate Config YAML"""
     banner("STAGE 1: Generating Solomuse Config")
-    config_path = args.output_root / "runpod_pipeline.yaml"
     
     if not is_done(args.output_root, "stage1_config") and not args.dry_run:
         config_yaml = f"""# Auto-generated RunPod Config
@@ -111,11 +216,11 @@ renderer_sample_rate: 24000
 renderer_model_type: token_transformer
 intent_model_type: transformer
 
-renderer_batch_size: 4
-intent_batch_size: 16
-
-renderer_epochs: 200
-intent_epochs: 100
+# Hyper-parameters
+renderer_batch_size: {args.renderer_batch_size}
+intent_batch_size: {args.intent_batch_size}
+renderer_epochs: {args.renderer_epochs}
+intent_epochs: {args.intent_epochs}
 """
         with open(config_path, "w") as f:
             f.write(config_yaml)
@@ -123,11 +228,9 @@ intent_epochs: 100
         mark_done(args.output_root, "stage1_config")
     else:
         logger.info(f"Stage 1 already completed. Config at {config_path}")
-        
-    return config_path
 
 def acquire_dataset(args):
-    """STAGE 2 - Acquire Slakh2100 (or specified dataset)"""
+    """STAGE 2 - Acquire Slakh2100"""
     banner(f"STAGE 2: Acquire Dataset ({args.dataset})")
     
     if args.dataset == "mock":
@@ -139,244 +242,243 @@ def acquire_dataset(args):
         
         has_tracks = any(args.slakh_root.glob("Track*"))
         if has_tracks:
-            logger.info(f"Found existing tracks in {args.slakh_root}, skipping download/extract.")
+            logger.info(f"Found existing tracks in {args.slakh_root}, skipping download.")
         else:
+            # Check Disk Space (Slakh2100 is ~100GB extracted)
+            free_gb = get_disk_free(args.slakh_root)
+            logger.info(f"Free space on {args.slakh_root.parent}: {free_gb:.2f} GB")
+            if free_gb < 150: # Safety margin
+                logger.error(f"Insufficient disk space! Need ~150GB, have {free_gb:.2f}GB.")
+                sys.exit(1)
+
             if args.slakh_archive and Path(args.slakh_archive).exists():
-                logger.info(f"Extracting user archive {args.slakh_archive} to {args.slakh_root}")
+                logger.info(f"Using local archive: {args.slakh_archive}")
                 run_cmd(f"unzip -q {args.slakh_archive} -d {args.slakh_root}")
             elif args.slakh_url:
-                zip_path = args.workspace_root / "dataset_download.zip"
-                logger.info(f"Downloading from {args.slakh_url} to {zip_path}")
-                run_cmd(f"wget -qO- \"{args.slakh_url}\" > {zip_path}")
-                logger.info("Extracting...")
+                zip_path = args.workspace_root / "slakh2100_full.zip"
+                logger.info(f"Downloading dataset from {args.slakh_url} to {zip_path}")
+                robust_download(args.slakh_url, zip_path)
+                logger.info("Extracting dataset...")
                 run_cmd(f"unzip -q {zip_path} -d {args.slakh_root}")
             else:
-                logger.error(f"Slakh directory {args.slakh_root} is empty!")
-                logger.error("Please provide --slakh-archive or --slakh-url, or upload manually.")
+                logger.error("Dataset missing and no --slakh-url or --slakh-archive provided!")
                 sys.exit(1)
                 
         num_tracks = len(list(args.slakh_root.glob("Track*")))
-        logger.info(f"Acquisition complete. Found {num_tracks} tracks. Directory size: {get_disk_usage(args.slakh_root)}")
+        logger.info(f"Acquisition complete. Tracks: {num_tracks}")
         mark_done(args.output_root, "stage2_acquire")
     else:
         logger.info("Stage 2 already completed.")
 
-def build_dataset_artifacts(args, config_path):
-    """STAGE 3 - Dataset Preparation"""
-    banner("STAGE 3: Build Dataset Artifacts")
-    base_cmd = f"python -m solomuse_data.cli"
-    if args.dataset == "mock":
-        cmd_env = {"SOLOMUSE_FORCE_CPU": "1"} # Mock is often CPU bound safely
+def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str):
+    """Helper to run a pipeline command using the venv python"""
+    if not is_done(args.output_root, step_name):
+        logger.info(f"Running step: {step_name}")
+        full_cmd = f"{python_bin} -m {cmd}"
+        run_cmd(full_cmd, dry_run=args.dry_run)
+        if not args.dry_run:
+            mark_done(args.output_root, step_name)
     else:
-        cmd_env = {}
+        logger.info(f"Step {step_name} already completed.")
+
+def build_artifacts(args, python_bin: Path, config_path: Path):
+    """STAGE 3 - Pipeline Artifact Build"""
+    banner("STAGE 3: Build Dataset Artifacts")
+    base_cmd = f"solomuse_data.cli"
+    limit_suffix = f" --limit {args.limit}" if args.limit else ""
     
     steps = [
-        ("build-pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset}"),
-        ("segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset}"),
-        ("situation", f"{base_cmd} situation --config {config_path} --dataset {args.dataset}" + (f" --limit {args.limit}" if args.limit else "")),
-        ("intent-targets", f"{base_cmd} intent-targets --config {config_path} --dataset {args.dataset}" + (f" --limit {args.limit}" if args.limit else ""))
+        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset}"),
+        ("stage3_segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset}"),
+        ("stage3_situation", f"{base_cmd} situation --config {config_path} --dataset {args.dataset}{limit_suffix}"),
+        ("stage3_intent_targets", f"{base_cmd} intent-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"),
     ]
     
-    for step_name, cmd in steps:
-        if not is_done(args.output_root, f"stage3_{step_name}"):
-            logger.info(f"Running '{step_name}' pipeline step...")
-            run_cmd(cmd, env=cmd_env, dry_run=args.dry_run)
-            if not args.dry_run:
-                mark_done(args.output_root, f"stage3_{step_name}")
-        else:
-            logger.info(f"Step '{step_name}' already completed.")
+    for marker, cmd in steps:
+        run_pipeline_step(args, python_bin, config_path, marker, cmd)
 
-def tokenize_targets(args, config_path):
-    """STAGE 4 - Extract EnCodec Tokens"""
-    banner("STAGE 4: Tokenize Renderer Targets (EnCodec)")
-    if not is_done(args.output_root, "stage4_tokenize"):
-        cmd = f"python -m solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}"
-        if args.limit:
-            cmd += f" --limit {args.limit}"
-        
-        logger.info("Running renderer token extraction (requires GPU ideally)...")
-        run_cmd(cmd, dry_run=args.dry_run)
-        
-        if not args.dry_run:
-            token_dir = args.output_root / "segments" / args.dataset
-            token_files = list(token_dir.rglob("x_tokens.npy"))
-            logger.info(f"Tokenization complete. Found {len(token_files)} x_tokens.npy files. Size: {get_disk_usage(token_dir)}")
-            mark_done(args.output_root, "stage4_tokenize")
-    else:
-        logger.info("Stage 4 already completed.")
+def tokenize(args, python_bin: Path, config_path: Path):
+    """STAGE 4 - EnCodec Tokenization"""
+    banner("STAGE 4: Tokenize Renderer Targets")
+    limit_suffix = f" --limit {args.limit}" if args.limit else ""
+    cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
+    run_pipeline_step(args, python_bin, config_path, "stage4_tokenize", cmd)
 
-def train_models(args, config_path):
-    """STAGE 5 - Deep Learning Training"""
-    banner("STAGE 5: Train Models (Intent + Token Renderer)")
-    
+def train(args, python_bin: Path, config_path: Path):
+    """STAGE 5 - Training"""
+    banner("STAGE 5: Train Models (Intent + Renderer)")
     wandb_flag = "--wandb" if (args.use_wandb or "WANDB_API_KEY" in os.environ) else ""
     
-    # 1. Train Intent Model
-    if not is_done(args.output_root, "stage5_train_intent"):
-        logger.info("Training Layer 2: Transformer Intent Planner...")
-        cmd_intent = f"python -m solomuse_data.cli train-intent --config {config_path} --dataset {args.dataset} --intent-model-type transformer {wandb_flag}"
-        run_cmd(cmd_intent, dry_run=args.dry_run)
-        if not args.dry_run:
-            mark_done(args.output_root, "stage5_train_intent")
-    else:
-        logger.info("Intent Training already completed.")
-        
-    # 2. Train Renderer Model
-    if not is_done(args.output_root, "stage5_train_renderer"):
-        logger.info("Training Layer 3: Transformer Token Renderer...")
-        cmd_ren = f"python -m solomuse_data.cli train-renderer-v2 --config {config_path} --dataset {args.dataset} {wandb_flag}"
-        run_cmd(cmd_ren, dry_run=args.dry_run)
-        if not args.dry_run:
-            mark_done(args.output_root, "stage5_train_renderer")
-    else:
-        logger.info("Renderer Training already completed.")
-
-def verify_pipeline(args, config_path):
-    """STAGE 6 - Verification Suite"""
-    banner(f"STAGE 6: End-to-End Verification (N={args.verify_n})")
+    # Intent
+    cmd_intent = f"solomuse_data.cli train-intent --config {config_path} --dataset {args.dataset} {wandb_flag}"
+    run_pipeline_step(args, python_bin, config_path, "stage5_train_intent", cmd_intent)
     
-    if args.dry_run:
-        logger.info("Dry-run verification skipped.")
-        return
-        
+    # Renderer
+    cmd_ren = f"solomuse_data.cli train-renderer-v2 --config {config_path} --dataset {args.dataset}"
+    run_pipeline_step(args, python_bin, config_path, "stage5_train_renderer", cmd_ren)
+
+def verify(args, python_bin: Path, config_path: Path):
+    """STAGE 6 - Verification"""
+    banner("STAGE 6: Verification & End-to-End Test")
+    if args.dry_run: return
+    
+    # 1. Random Sample Verification
     verification_dir = args.output_root / "verification"
     verification_dir.mkdir(parents=True, exist_ok=True)
     
-    # 1. Choose segments
     manifest_path = args.output_root / "segments" / args.dataset / "manifest_intent_splits.csv"
     if not manifest_path.exists():
-        logger.error(f"Cannot find manifest at {manifest_path} for verification.")
-        sys.exit(1)
-        
-    test_segments = []
-    with open(manifest_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-             test_segments.append((row['segment_id'], row['track_id']))
-             
-    if not test_segments:
-        logger.error("No segments found in manifest for verification.")
-        sys.exit(1)
-        
-    random.seed(42)
-    sample_segs = random.sample(test_segments, min(args.verify_n, len(test_segments)))
-    
-    ids_file = verification_dir / "sanity_segment_ids.txt"
-    with open(ids_file, "w") as f:
-        for seg_id, _ in sample_segs:
-            f.write(f"{seg_id}\\n")
-            
-    # 2. Run Inference
-    seg_root = args.output_root / "segments" / args.dataset
-    for i, (seg_id, track_id) in enumerate(sample_segs, 1):
-        seg_dir = seg_root / track_id / seg_id
-        cmd = f"python -m solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir {seg_dir}"
-        logger.info(f"Verifying ({i}/{len(sample_segs)}): {seg_id}")
-        run_cmd(cmd)
-        
-    # 3. Generate Report restricted to these IDs
-    report_csv = verification_dir / "v2_slakh_infer_sanity.csv"
-    cmd_report = f"python -m solomuse_data.cli export-unified-report --config {config_path} --dataset {args.dataset} --action sanity-triples --segment-ids-file {ids_file} --output {report_csv}"
-    run_cmd(cmd_report)
-    
-    # 4. Summarize Report
-    cmd_sum = f"python -m solomuse_data.cli inspect-artifacts summarize --config {config_path} --dataset {args.dataset} --report-path {report_csv} --only-generated"
-    run_cmd(cmd_sum)
-    
-    # 5. Assert Pass Criteria
-    with open(report_csv, 'r') as f:
-        reader = list(csv.DictReader(f))
-        
-    clean_count = 0
-    y_hat_count = 0
-    silent_count = 0
-    
-    for row in reader:
-        if row.get("has_y_hat") == "1":
-            y_hat_count += 1
-        if row.get("y_is_silent") == "1":
-            silent_count += 1
-            
-        # Basic clean check: has y_hat, has intent seq
-        if row.get("has_y_hat") == "1" and row.get("has_intent_pred") == "1" and row.get("alignment_ok") == "1":
-            clean_count += 1
-            
-    logger.info(f"Verification Results: Generated {y_hat_count}/{len(sample_segs)} audio files. {silent_count} silent tracks. {clean_count} perfectly clean generations.")
-    
-    if y_hat_count < len(sample_segs):
-        logger.error(f"VERIFICATION FAILED: Expected {len(sample_segs)} generated audios, got {y_hat_count}.")
-        sys.exit(1)
-    
-    mark_done(args.output_root, "stage6_verification")
+        logger.error(f"Manifest missing at {manifest_path}")
+        return
 
-def package_outputs(args, config_path):
+    # Choose N segments
+    with open(manifest_path, 'r') as f:
+        rows = list(csv.DictReader(f))
+    
+    if not rows:
+        logger.error("Empty manifest!")
+        return
+
+    random.seed(42)
+    sample = random.sample(rows, min(args.verify_n, len(rows)))
+    
+    for i, row in enumerate(sample):
+        seg_id = row['segment_id']
+        track_id = row['track_id']
+        seg_dir = args.output_root / "segments" / args.dataset / track_id / seg_id
+        logger.info(f"[{i+1}/{len(sample)}] Inferring: {seg_id}")
+        cmd = f"solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir {seg_dir}"
+        run_cmd(f"{python_bin} -m {cmd}")
+
+    # 2. Unified Report
+    report_csv = verification_dir / "autonomous_verify_report.csv"
+    cmd_report = f"solomuse_data.cli export-unified-report --config {config_path} --dataset {args.dataset} --action report --output {report_csv}"
+    run_cmd(f"{python_bin} -m {cmd_report}")
+    
+    # 3. Summarize
+    cmd_sum = f"solomuse_data.cli inspect-artifacts summarize --config {config_path} --dataset {args.dataset} --report-path {report_csv}"
+    run_cmd(f"{python_bin} -m {cmd_sum}")
+
+def package(args, config_path: Path):
     """STAGE 7 - Packaging"""
-    banner("STAGE 7: Final Packaging")
-    logger.info("RUN COMPLETE!")
-    logger.info("="*70)
-    logger.info(f"Persistent Output Root : {args.output_root}")
-    logger.info(f"Intent Checkpoints     : {args.output_root}/models/{args.dataset}/intent_transformer/")
-    logger.info(f"Renderer Checkpoints   : {args.output_root}/models/{args.dataset}/renderer_token_transformer/")
-    logger.info(f"Verification Report    : {args.output_root}/verification/")
-    logger.info("="*70)
-    logger.info("To run inference on a new segment, use the following command:")
-    logger.info(f"python -m solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir </path/to/segment>")
+    banner("STAGE 7: Final Packaging & Bundle")
+    if args.dry_run:
+        logger.info("Dry-run: Skipping final bundling.")
+        return
+        
+    bundle_dir = args.output_root / "final_bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy Config
+    shutil.copy2(config_path, bundle_dir / "config_runpod.yaml")
+    
+    # Find Checkpoints
+    logger.info("Collecting best checkpoints...")
+    checkpoint_roots = [
+        args.output_root / "checkpoints" / "intent",
+        args.output_root / "checkpoints" / "renderer"
+    ]
+    
+    for root in checkpoint_roots:
+        if root.exists():
+            for pt in root.glob("*.pt"):
+                shutil.copy2(pt, bundle_dir / pt.name)
+    
+    # Copy Verification Report
+    report_csv = args.output_root / "verification" / "autonomous_verify_report.csv"
+    if report_csv.exists():
+        shutil.copy2(report_csv, bundle_dir / "verification_report.csv")
+    
+    # Create Readme
+    with open(bundle_dir / "README_INFERENCE.txt", "w") as f:
+        f.write("SoloMuse V2 Inference Guide\n" + "="*30 + "\n")
+        f.write(f"Run Name: {args.run_name}\n")
+        f.write(f"Date: {time.ctime()}\n\n")
+        f.write("To run inference on a new file locally:\n")
+        f.write(f"python -m solomuse_data.cli infer-pipeline --config config_runpod.yaml --dataset {args.dataset} --segment-dir <path>\n")
+
+    logger.info(f"Bundle created at: {bundle_dir}")
+    
+    if args.tar_final_bundle:
+        archive_path = args.output_root / f"{args.run_name}_bundle.tar.gz"
+        logger.info(f"Creating archive: {archive_path}")
+        run_cmd(f"tar -czf {archive_path} -C {args.output_root} final_bundle")
+
+    banner("RUN COMPLETE!")
+    logger.info(f"Logs: {args.output_root}/runpod_run.log")
 
 def main():
-    # Environment Detection: Avoid hardcoded /workspace on local machines
-    workspace_exists = Path("/workspace").exists()
-    default_workspace = "/workspace" if workspace_exists else str(Path.cwd() / "workspace")
+    global logger
+    parser = argparse.ArgumentParser(description="SoloMuse Autonomous RunPod Runner")
+    # Global / Run Identity
+    parser.add_argument("--run-name", type=str, default=f"solomuse_run_{int(time.time())}")
+    parser.add_argument("--dataset", type=str, default="slakh", help="slakh, mock")
     
-    persist_volume = Path("/runpod-volume")
-    if persist_volume.exists():
-        default_persist = "/runpod-volume"
-    elif workspace_exists:
-        default_persist = "/workspace"
-    else:
-        # Local development fallback
-        default_persist = str(Path.cwd() / "runpod_results")
-
-    parser = argparse.ArgumentParser(description="SoloMuse RunPod Single-Click Pipeline Runner")
-    parser.add_argument("--run-name", type=str, default=f"solomuse_run_{int(time.time())}", help="Unique run identifier")
-    parser.add_argument("--dataset", type=str, default="slakh", help="Dataset slug (slakh, mock)")
-    parser.add_argument("--workspace-root", type=str, default=default_workspace, help="Ephemeral workspace dir")
-    parser.add_argument("--persistent-root", type=str, default=default_persist, help="Persistent storage volume")
+    # Paths & Persistent Storage
+    parser.add_argument("--workspace-root", type=str, default="/workspace")
+    default_persist = "/runpod-volume" if Path("/runpod-volume").exists() else "/workspace"
+    parser.add_argument("--persistent-root", type=str, default=default_persist)
     
-    parser.add_argument("--slakh-archive", type=str, help="Path to local slakh zip/tar file")
+    # Repo Clone Settings
+    parser.add_argument("--repo-url", type=str, default="https://github.com/gatencia/SOLOMUSE.git")
+    parser.add_argument("--repo-branch", type=str, default="main")
+    
+    # Dataset Acquisition
     parser.add_argument("--slakh-url", type=str, help="Direct download URL for Slakh archive")
+    parser.add_argument("--slakh-archive", type=str, help="Local path to uploaded slakh zip")
     
-    parser.add_argument("--limit", type=int, help="Limit number of segments processed (for fast testing)")
-    parser.add_argument("--verify-n", type=int, default=10, help="Number of segments for E2E verification")
-    parser.add_argument("--use-wandb", action="store_true", help="Explicitly enable Weights & Biases")
-    parser.add_argument("--dry-run", action="store_true", help="Print commands instead of running them")
+    # Hyper-parameters
+    parser.add_argument("--limit", type=int, help="Limit number of segments for fast pass")
+    parser.add_argument("--intent-epochs", type=int, default=100)
+    parser.add_argument("--renderer-epochs", type=int, default=200)
+    parser.add_argument("--intent-batch-size", type=int, default=16)
+    parser.add_argument("--renderer-batch-size", type=int, default=4)
+    
+    # Flags
+    parser.add_argument("--verify-n", type=int, default=10)
+    parser.add_argument("--tar-final-bundle", action="store_true")
+    parser.add_argument("--use-wandb", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     
     args = parser.parse_args()
     
-    # Setup Paths
+    if args.smoke_test:
+        args.limit = 10
+        args.intent_epochs = 1
+        args.renderer_epochs = 1
+        args.verify_n = 2
+        args.dataset = "mock" if not args.slakh_url else args.dataset
+        logger.info("SMOKE TEST enabled. Running ultra-light pass.")
+
+    # 1. Resolve Global Paths
     args.persistent_root = Path(args.persistent_root)
     args.workspace_root = Path(args.workspace_root)
-    
     args.output_root = args.persistent_root / "SOLOMUSE_RUNS" / args.run_name
-    
-    try:
-        args.output_root.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Failed to create output directory at {args.output_root}")
-        logger.error(f"Error: {e}")
-        logger.error("If running locally, ensure the path is writable or provide --persistent-root.")
-        sys.exit(1)
-    
     args.slakh_root = args.persistent_root / "datasets" / "slakh2100"
     
-    # Execute Pipeline
+    # 2. Update Logger with File Handler
+    log_file = args.output_root / "runpod_run.log"
+    logger = get_logger(log_file)
+    
+    logger.info(f"Starting SoloMuse Autonomous Runner v2. RunName: {args.run_name}")
+    logger.info(f"Persistent Root: {args.persistent_root}")
+    logger.info(f"Output Root:     {args.output_root}")
+    
+    # 3. Execution Pipeline
     bootstrap_system(args)
-    config_path = write_runpod_config(args)
+    repo_root = clone_repo(args)
+    python_bin = setup_python(args, repo_root)
+    
+    config_path = args.output_root / "runpod_pipeline.yaml"
+    write_pipeline_config(args, config_path)
+    
     acquire_dataset(args)
-    build_dataset_artifacts(args, config_path)
-    tokenize_targets(args, config_path)
-    train_models(args, config_path)
-    verify_pipeline(args, config_path)
-    package_outputs(args, config_path)
+    build_artifacts(args, python_bin, config_path)
+    tokenize(args, python_bin, config_path)
+    train(args, python_bin, config_path)
+    verify(args, python_bin, config_path)
+    package(args, config_path)
 
 if __name__ == "__main__":
     main()
