@@ -431,16 +431,16 @@ def verify(args, python_bin: Path, config_path: Path):
         seg_dir = args.output_root / "segments" / args.dataset / track_id / seg_id
         logger.info(f"[{i+1}/{len(sample)}] Inferring: {seg_id}")
         cmd = f"solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir {seg_dir}"
-        run_cmd(f"{python_bin} -m {cmd}")
+        run_pipeline_step(args, python_bin, config_path, f"verify_infer_{seg_id}", cmd)
 
     # 2. Unified Report
     report_csv = verification_dir / "autonomous_verify_report.csv"
     cmd_report = f"solomuse_data.cli export-unified-report --config {config_path} --dataset {args.dataset} --action report --output {report_csv}"
-    run_cmd(f"{python_bin} -m {cmd_report}")
+    run_pipeline_step(args, python_bin, config_path, "verify_export_report", cmd_report)
     
     # 3. Summarize
     cmd_sum = f"solomuse_data.cli inspect-artifacts summarize --config {config_path} --dataset {args.dataset} --report-path {report_csv}"
-    run_cmd(f"{python_bin} -m {cmd_sum}")
+    run_pipeline_step(args, python_bin, config_path, "verify_summarize", cmd_sum)
 
 def package(args, config_path: Path):
     """STAGE 7 - Packaging"""
