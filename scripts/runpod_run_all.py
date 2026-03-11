@@ -458,6 +458,8 @@ def package(args, config_path: Path):
     # Find Checkpoints
     logger.info("Collecting best checkpoints...")
     checkpoint_roots = [
+        args.output_root / "models" / "intent_v1",
+        args.output_root / "models" / "renderer_v1",
         args.output_root / "checkpoints" / "intent",
         args.output_root / "checkpoints" / "renderer"
     ]
