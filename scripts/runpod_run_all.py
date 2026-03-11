@@ -301,15 +301,34 @@ def acquire_dataset(args):
 
             if args.slakh_archive and Path(args.slakh_archive).exists():
                 logger.info(f"Using local archive: {args.slakh_archive}")
-                run_cmd(f"unzip -q {args.slakh_archive} -d {args.slakh_root}")
+                archive_path = Path(args.slakh_archive)
+                if archive_path.suffix == ".zip":
+                    run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                else:
+                    run_cmd(f"tar -xf {archive_path} -C {args.slakh_root} --strip-components=1")
             elif args.slakh_url:
-                zip_path = args.workspace_root / "slakh2100_full.zip"
-                logger.info(f"Downloading dataset from {args.slakh_url} to {zip_path}")
-                robust_download(args.slakh_url, zip_path)
+                archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
+                archive_path = args.workspace_root / archive_name
+                logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
+                robust_download(args.slakh_url, archive_path)
                 logger.info("Extracting dataset...")
-                run_cmd(f"unzip -q {zip_path} -d {args.slakh_root}")
+                if ".tar.gz" in args.slakh_url:
+                    run_cmd(f"tar -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                else:
+                    run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
             else:
-                logger.error("Dataset missing and no --slakh-url or --slakh-archive provided!")
+                logger.error("=" * 60)
+                logger.error(" DATASET ACQUISITION FAILED")
+                logger.error("-" * 60)
+                logger.error(" No dataset found and no download source specified.")
+                logger.error(" To fix this, you have three options:")
+                logger.error(" 1. Run with the official Slakh2100 Redux URL (100GB):")
+                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1")
+                logger.error(" 2. Run with the 'Tiny' BabySlakh (0.3GB - faster for dev):")
+                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1")
+                logger.error(" 3. Run a smoke test with mock data (fastest verification):")
+                logger.error("    python scripts/runpod_run_all.py --smoke-test")
+                logger.error("=" * 60)
                 sys.exit(1)
                 
         num_tracks = len(list(args.slakh_root.glob("Track*")))
@@ -472,8 +491,10 @@ def main():
     parser.add_argument("--repo-branch", type=str, default="main")
     
     # Dataset Acquisition
-    parser.add_argument("--slakh-url", type=str, help="Direct download URL for Slakh archive")
-    parser.add_argument("--slakh-archive", type=str, help="Local path to uploaded slakh zip")
+    parser.add_argument("--slakh-url", type=str, 
+                        default="https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1",
+                        help="Direct download URL for Slakh archive (Default: Zenodo full release)")
+    parser.add_argument("--slakh-archive", type=str, help="Local path to uploaded slakh zip or tar.gz")
     
     # Hyper-parameters
     parser.add_argument("--limit", type=int, help="Limit number of segments for fast pass")
