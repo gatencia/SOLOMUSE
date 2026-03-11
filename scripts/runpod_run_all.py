@@ -238,8 +238,14 @@ dataset_roots:
 canonical_sample_rate: 44100
 intent_hz: 10
 renderer_sample_rate: 24000
-renderer_model_type: token_transformer
+renderer_model_type: {"conv1d" if args.baseline else "token_transformer"}
 intent_model_type: transformer
+
+# --- Versioning ---
+situation_model_version: v1
+intent_model_version: v2
+renderer_model_version: {"v1" if args.baseline else "v2"}
+renderer_representation: {"wavechunk" if args.baseline else "encodec"}
 
 # --- Intent V2 Hyperparameters ---
 intent_d_model: 256
@@ -381,11 +387,17 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
         run_pipeline_step(args, python_bin, config_path, marker, cmd)
 
 def tokenize(args, python_bin: Path, config_path: Path):
-    """STAGE 4 - EnCodec Tokenization"""
-    banner("STAGE 4: Tokenize Renderer Targets")
-    limit_suffix = f" --limit {args.limit}" if args.limit else ""
-    cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
-    run_pipeline_step(args, python_bin, config_path, "stage4_tokenize", cmd)
+    """STAGE 4 - Renderer Target Collection"""
+    if args.baseline:
+        banner("STAGE 4: Waveform Renderer Targets (Baseline)")
+        limit_suffix = f" --limit {args.limit}" if args.limit else ""
+        cmd = f"solomuse_data.cli renderer-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
+        run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v1", cmd)
+    else:
+        banner("STAGE 4: EnCodec Tokenization (V2)")
+        limit_suffix = f" --limit {args.limit}" if args.limit else ""
+        cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
+        run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v2", cmd)
 
 def train(args, python_bin: Path, config_path: Path):
     """STAGE 5 - Training"""
@@ -397,8 +409,12 @@ def train(args, python_bin: Path, config_path: Path):
     run_pipeline_step(args, python_bin, config_path, "stage5_train_intent", cmd_intent)
     
     # Renderer
-    cmd_ren = f"solomuse_data.cli train-renderer-v2 --config {config_path} --dataset {args.dataset}"
-    run_pipeline_step(args, python_bin, config_path, "stage5_train_renderer", cmd_ren)
+    if args.baseline:
+        cmd_ren = f"solomuse_data.cli train-renderer --config {config_path} --dataset {args.dataset} {wandb_flag}"
+        run_pipeline_step(args, python_bin, config_path, "stage5_train_renderer_v1", cmd_ren)
+    else:
+        cmd_ren = f"solomuse_data.cli train-renderer-v2 --config {config_path} --dataset {args.dataset}"
+        run_pipeline_step(args, python_bin, config_path, "stage5_train_renderer_v2", cmd_ren)
 
 def verify(args, python_bin: Path, config_path: Path):
     """STAGE 6 - Verification"""
@@ -430,7 +446,9 @@ def verify(args, python_bin: Path, config_path: Path):
         track_id = row['track_id']
         seg_dir = args.output_root / "segments" / args.dataset / track_id / seg_id
         logger.info(f"[{i+1}/{len(sample)}] Inferring: {seg_id}")
-        cmd = f"solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir {seg_dir}"
+        
+        baseline_flag = "--renderer-model-type conv1d" if args.baseline else ""
+        cmd = f"solomuse_data.cli infer-pipeline --config {config_path} --dataset {args.dataset} --segment-dir {seg_dir} {baseline_flag}"
         run_pipeline_step(args, python_bin, config_path, f"verify_infer_{seg_id}", cmd)
 
     # 2. Unified Report
@@ -527,6 +545,7 @@ def main():
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
+    parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")
     
     args = parser.parse_args()
     
