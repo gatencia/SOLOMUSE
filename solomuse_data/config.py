@@ -183,7 +183,7 @@ class PipelineConfig(BaseModel):
     @field_validator("intent_model_version")
     @classmethod
     def validate_intent_version(cls, v):
-        valid = {"v1"}
+        valid = {"v1", "v2"}
         if v.lower() not in valid:
             raise ValueError(f"intent_model_version must be one of {valid}")
         return v.lower()
