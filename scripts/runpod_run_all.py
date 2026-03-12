@@ -48,7 +48,7 @@ def banner(msg):
     print(f" {msg}")
     print("="*70)
 
-def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None, shell: bool = True):
+def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None, shell: bool = True, fatal: bool = True):
     logger.info(f"Running: {cmd}")
     if dry_run:
         return
@@ -59,7 +59,9 @@ def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None,
     result = subprocess.run(cmd, shell=shell, env=full_env, cwd=cwd)
     if result.returncode != 0:
         logger.error(f"Command failed with exit code {result.returncode}:\n{cmd}")
-        sys.exit(1)
+        if fatal:
+            sys.exit(1)
+    return result
 
 def is_done(root: Path, step_name: str) -> bool:
     marker_dir = root / ".done"
@@ -303,8 +305,12 @@ def acquire_dataset(args):
             # Check Disk Space (Slakh2100 is ~100GB extracted)
             free_gb = get_disk_free(args.slakh_root)
             logger.info(f"Free space on {args.slakh_root.parent}: {free_gb:.2f} GB")
-            if free_gb < 150: # Safety margin
-                logger.error(f"Insufficient disk space! Need ~150GB, have {free_gb:.2f}GB.")
+            # If tiny mode, we only need ~1-2GB
+            min_space = 2 if getattr(args, "tiny", False) else 150
+            if free_gb < min_space: # Safety margin
+                logger.error(f"Insufficient disk space! Need ~{min_space}GB, have {free_gb:.2f}GB.")
+                if not getattr(args, "tiny", False):
+                    logger.info("TIP: Run with --tiny to use a much smaller dataset (BabySlakh) that fits on small pods.")
                 sys.exit(1)
 
             if args.slakh_archive and Path(args.slakh_archive).exists():
@@ -319,7 +325,19 @@ def acquire_dataset(args):
                 # Use persistent_root for the archive as well to leverage network volumes
                 archive_path = args.persistent_root / archive_name
                 logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
-                robust_download(args.slakh_url, archive_path)
+                
+                try:
+                    robust_download(args.slakh_url, archive_path)
+                except SystemExit:
+                    logger.error("=" * 60)
+                    logger.error(" DOWNLOAD FAILED: Disk Quota Exceeded")
+                    logger.error("-" * 60)
+                    logger.error(" Your Pod's disk volume is likely too small for the 100GB Slakh dataset.")
+                    logger.error(" To fix this, run with the 'Tiny' BabySlakh dataset instead:")
+                    logger.error(" python runpod_run_all.py --baseline --tiny")
+                    logger.error("=" * 60)
+                    sys.exit(1)
+                
                 logger.info("Extracting dataset...")
                 try:
                     if ".tar.gz" in args.slakh_url:
@@ -555,8 +573,14 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")
+    parser.add_argument("--tiny", action="store_true", help="Use BabySlakh dataset (~1GB) for limited disk space pods")
     
     args = parser.parse_args()
+    
+    if args.tiny:
+        args.slakh_url = "https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1"
+        args.limit = 20 # Only 20 tracks in BabySlakh anyway
+        logger.info("TINY MODE enabled. Using BabySlakh dataset (~1GB).")
     
     if args.smoke_test:
         args.limit = 10
