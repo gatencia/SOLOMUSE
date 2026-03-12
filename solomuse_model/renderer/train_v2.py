@@ -10,6 +10,11 @@ import json
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+# Limit CPU threading for data workers
+torch.set_num_threads(1)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 from solomuse_data.config import PipelineConfig
 from solomuse_model.renderer.dataset_tokens import RendererTokenDataset, token_collate_fn
 from solomuse_model.renderer.model_v2.transformer_lm import TokenTransformerRenderer
@@ -45,8 +50,22 @@ def run_train_renderer_v2(cfg: PipelineConfig, dataset_name: str):
         
     logger.info(f"Datasets Built -> Train: {len(train_ds)} | Val: {len(val_ds)}")
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.renderer_batch_size, shuffle=True, collate_fn=token_collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=cfg.renderer_batch_size, shuffle=False, collate_fn=token_collate_fn)
+    train_loader = DataLoader(
+        train_ds, 
+        batch_size=cfg.renderer_batch_size, 
+        shuffle=True, 
+        collate_fn=token_collate_fn,
+        num_workers=cfg.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_ds, 
+        batch_size=cfg.renderer_batch_size, 
+        shuffle=False, 
+        collate_fn=token_collate_fn,
+        num_workers=cfg.num_workers,
+        pin_memory=True
+    )
 
     # 2. Model
     # Due to severe PyTorch MPS bus errors with causal masking in TransformerDecoder,
@@ -137,6 +156,9 @@ def run_train_renderer_v2(cfg: PipelineConfig, dataset_name: str):
             intent = batch["intent_aligned"].to(device)
             sit = batch["situation"].to(device)
             
+            if batch_idx == 0 and epoch == 0:
+                logger.info(f"Device Verification - Model: {next(model.parameters()).device}, Batch: {x_tokens.device}")
+            
             # Predict targets (teacher forcing). The model masks context automatically.
             optimizer.zero_grad()
             logits = model(x_tokens=x_tokens, intent_aligned=intent, situation=sit, y_tokens=y_tokens)
@@ -180,7 +202,13 @@ def run_train_renderer_v2(cfg: PipelineConfig, dataset_name: str):
         val_loss = 0.0
         with torch.no_grad():
             if len(val_ds) > 0:
-                for batch in DataLoader(val_ds, batch_size=cfg.renderer_batch_size, collate_fn=token_collate_fn):
+                for batch in DataLoader(
+                    val_ds, 
+                    batch_size=cfg.renderer_batch_size, 
+                    collate_fn=token_collate_fn,
+                    num_workers=cfg.num_workers,
+                    pin_memory=True
+                ):
                     x_tokens = batch["x_tokens"].to(device)
                     y_tokens = batch["y_tokens"].to(device)
                     intent = batch["intent_aligned"].to(device)

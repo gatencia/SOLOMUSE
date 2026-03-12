@@ -78,7 +78,7 @@ class PipelineConfig(BaseModel):
     intent_weight_decay: float = 1e-2 # Updated default
     intent_grad_clip: float = 1.0 # Updated default
     intent_epochs: int = 50 # Updated default
-    intent_batch_size: int = 16
+    intent_batch_size: int = 32
     intent_warmup_steps: int = 2000
     intent_lr_schedule: str = "cosine" # "constant", "cosine"
     intent_checkpoint_path: str | None = None
@@ -117,7 +117,7 @@ class PipelineConfig(BaseModel):
     renderer_weight_decay: float = 1e-2 # Updated default
     renderer_grad_clip: float = 1.0
     renderer_epochs: int = 100 # Updated default
-    renderer_batch_size: int = 8
+    renderer_batch_size: int = 32
     renderer_warmup_steps: int = 5000
     renderer_lr_schedule: str = "cosine"
     renderer_dropout: float = 0.1

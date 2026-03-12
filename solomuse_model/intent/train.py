@@ -16,6 +16,11 @@ from solomuse_model.intent.model_v2 import IntentPlannerTransformer_V2
 import datetime
 from tqdm import tqdm
 
+# Limit CPU threading for data workers
+torch.set_num_threads(1)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 logger = logging.getLogger(__name__)
 import math
 
@@ -284,6 +289,9 @@ def run_train_intent(cfg: PipelineConfig, dataset_name: str):
             Y = batch["intent"].to(device)
             segment_ids = batch["segment_id"]
             track_ids = batch["track_id"]
+            
+            if batch_idx == 0 and epoch == 0:
+                logger.info(f"Device Verification - Model: {next(model.parameters()).device}, Batch: {X.device}")
             
             crash_reason = None
             stage = "Pre-Forward"

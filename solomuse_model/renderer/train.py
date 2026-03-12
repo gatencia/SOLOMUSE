@@ -4,6 +4,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
+import os
+
+# Limit CPU threading for data workers
+torch.set_num_threads(1)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 from solomuse_data.config import PipelineConfig
 from solomuse_model.renderer.dataset import RendererDataset
@@ -119,16 +125,30 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
             by = pad_sequence(ys, batch_first=True)
             return bx, bi, bs, by
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.renderer_batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=cfg.renderer_batch_size, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_ds, 
+        batch_size=cfg.renderer_batch_size, 
+        shuffle=True, 
+        collate_fn=collate_fn,
+        num_workers=cfg.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_ds, 
+        batch_size=cfg.renderer_batch_size, 
+        shuffle=False, 
+        collate_fn=collate_fn,
+        num_workers=cfg.num_workers,
+        pin_memory=True
+    )
 
     logger.info(f"Loaded {len(train_ds)} items for train split")
     logger.info(f"Loaded {len(val_ds)} items for val split")
     
     if len(train_loader) > 0:
         _bx, _bi, _bs, _by = next(iter(train_loader))
-        logger.info(f"Diagnostics - X: shape={_bx.shape}, mean={_bx.mean().item():.4f}, std={_bx.std().item():.4f}")
-        logger.info(f"Diagnostics - Target Y: shape={_by.shape}, min={_by.min().item():.4f}, max={_by.max().item():.4f}")
+        logger.info(f"Diagnostics - X: shape={_bx.shape}, device={_bx.device}, mean={_bx.mean().item():.4f}, std={_bx.std().item():.4f}")
+        logger.info(f"Diagnostics - Target Y: shape={_by.shape}, device={_by.device}, min={_by.min().item():.4f}, max={_by.max().item():.4f}")
 
     # 3. Model
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
@@ -180,6 +200,9 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
             
             bx, bi, bs, by = bx.to(device), bi.to(device), bs.to(device), by.to(device)
             
+            if batch_idx == 0 and epoch == 0:
+                logger.info(f"Device Verification - Model: {next(model.parameters()).device}, Batch: {bx.device}")
+            
             optimizer.zero_grad()
             preds = model(bx, bi, bs)
             
@@ -209,7 +232,13 @@ def run_train_renderer(cfg: PipelineConfig, dataset_name: str):
         val_loss = 0.0
         with torch.no_grad():
             if len(val_ds) > 0:
-                for bx, bi, bs, by in DataLoader(val_ds, batch_size=cfg.renderer_batch_size, collate_fn=collate_fn):
+                for bx, bi, bs, by in DataLoader(
+                    val_ds, 
+                    batch_size=cfg.renderer_batch_size, 
+                    collate_fn=collate_fn,
+                    num_workers=cfg.num_workers,
+                    pin_memory=True
+                ):
                     bx, bi, bs, by = bx.to(device), bi.to(device), bs.to(device), by.to(device)
                     preds = model(bx, bi, bs)
                     val_loss += criterion(preds, by).item() * bx.size(0)

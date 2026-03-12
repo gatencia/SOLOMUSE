@@ -200,13 +200,18 @@ def setup_python(args, repo_root: Path):
             verify_script = f"""
 import torch
 import sys
-print(f'Python: {{sys.version}}')
-print(f'Torch: {{torch.__version__}}')
-print(f'CUDA Available: {{torch.cuda.is_available()}}')
+import os
+print(f'Python: {sys.version}')
+print(f'Torch: {torch.__version__}')
+print(f'CUDA Available: {torch.cuda.is_available()}')
+print(f'CuDNN Enabled: {torch.backends.cudnn.enabled}')
 if torch.cuda.is_available():
-    print(f'GPU: {{torch.cuda.get_device_name(0)}}')
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'Compute Capability: {torch.cuda.get_device_capability(0)}')
 else:
     print('WARNING: CUDA NOT DETECTED')
+print(f'Torch Threads: {torch.get_num_threads()}')
+print(f'OMP_NUM_THREADS: {os.environ.get("OMP_NUM_THREADS", "Not Set")}')
 """
             run_cmd(f"{python_bin} -c \"{verify_script}\"")
             
@@ -380,9 +385,16 @@ def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str,
     """Helper to run a pipeline command using the venv python"""
     if not is_done(args.output_root, step_name):
         logger.info(f"Running step: {step_name}")
-        # Explicitly set PYTHONPATH to the repository root so solomuse_model can be imported
+        # Explicitly set PYTHONPATH and limit CPU threading for data workers
         repo_root = args.persistent_root / "repos" / "SOLOMUSE"
-        custom_env = {"PYTHONPATH": str(repo_root)}
+        custom_env = {
+            "PYTHONPATH": str(repo_root),
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "VECLIB_MAXIMUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1"
+        }
         
         full_cmd = f"{python_bin} -m {cmd}"
         run_cmd(full_cmd, env=custom_env, dry_run=args.dry_run)

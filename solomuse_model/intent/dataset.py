@@ -158,14 +158,18 @@ def build_intent_dataloaders(cfg: PipelineConfig, dataset_name: str):
         val_ds, 
         batch_size=cfg.intent_batch_size, 
         shuffle=False, 
-        drop_last=False
+        drop_last=False,
+        num_workers=cfg.num_workers,
+        pin_memory=True
     )
 
     test_loader = DataLoader(
         test_ds, 
         batch_size=cfg.intent_batch_size, 
         shuffle=False, 
-        drop_last=False
+        drop_last=False,
+        num_workers=cfg.num_workers,
+        pin_memory=True
     )
     
     logger.info(f"Intent Datasets Built -> "
