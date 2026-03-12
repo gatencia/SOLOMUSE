@@ -61,12 +61,14 @@ def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None,
         logger.error(f"Command failed with exit code {result.returncode}:\n{cmd}")
         sys.exit(1)
 
-def is_done(marker_dir: Path, step_name: str) -> bool:
-    return (marker_dir / f".{step_name}.done").exists()
+def is_done(root: Path, step_name: str) -> bool:
+    marker_dir = root / ".done"
+    return (marker_dir / f"{step_name}.done").exists()
 
-def mark_done(marker_dir: Path, step_name: str):
+def mark_done(root: Path, step_name: str):
+    marker_dir = root / ".done"
     marker_dir.mkdir(parents=True, exist_ok=True)
-    with open(marker_dir / f".{step_name}.done", "w") as f:
+    with open(marker_dir / f"{step_name}.done", "w") as f:
         f.write(str(time.time()))
 
 def get_disk_free(path: Path) -> float:
