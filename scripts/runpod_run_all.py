@@ -251,6 +251,8 @@ intent_model_version: v2
 renderer_model_version: {"v1" if args.baseline else "v2"}
 renderer_representation: {"wavechunk" if args.baseline else "encodec"}
 
+num_workers: {args.num_workers}
+
 # --- Intent V2 Hyperparameters ---
 intent_d_model: 256
 intent_num_layers: 6
@@ -397,8 +399,8 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     limit_suffix = f" --limit {args.limit}" if args.limit else ""
     
     steps = [
-        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset}"),
-        ("stage3_segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset}"),
+        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}"),
+        ("stage3_segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}"),
         ("stage3_situation", f"{base_cmd} situation --config {config_path} --dataset {args.dataset}{limit_suffix}"),
         ("stage3_intent_targets", f"{base_cmd} intent-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"),
     ]
@@ -570,6 +572,7 @@ def main():
     parser.add_argument("--verify-n", type=int, default=10)
     parser.add_argument("--tar-final-bundle", action="store_true")
     parser.add_argument("--use-wandb", action="store_true")
+    parser.add_argument("--num-workers", type=int, default=4, help="Number of CPU workers for dataset prep")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")
