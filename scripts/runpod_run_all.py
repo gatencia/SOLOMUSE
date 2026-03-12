@@ -476,16 +476,20 @@ def package(args, config_path: Path):
     # Find Checkpoints
     logger.info("Collecting best checkpoints...")
     checkpoint_roots = [
-        args.output_root / "models" / "intent_v1",
-        args.output_root / "models" / "renderer_v1",
-        args.output_root / "checkpoints" / "intent",
-        args.output_root / "checkpoints" / "renderer"
+        (args.output_root / "models" / "intent_v1", "intent"),
+        (args.output_root / "models" / "intent_v2", "intent"),
+        (args.output_root / "models" / "renderer_v1", "renderer"),
+        (args.output_root / "models" / "renderer_v2", "renderer"),
+        (args.output_root / "checkpoints" / "intent", "intent"),
+        (args.output_root / "checkpoints" / "renderer", "renderer")
     ]
     
-    for root in checkpoint_roots:
+    for root, prefix in checkpoint_roots:
         if root.exists():
             for pt in root.glob("*.pt"):
-                shutil.copy2(pt, bundle_dir / pt.name)
+                # Avoid overwriting best.pt if multiple exist, use prefix
+                dest_name = f"{prefix}_{pt.name}" if pt.name == "best.pt" else pt.name
+                shutil.copy2(pt, bundle_dir / dest_name)
     
     # Copy Verification Report
     report_csv = args.output_root / "verification" / "autonomous_verify_report.csv"
