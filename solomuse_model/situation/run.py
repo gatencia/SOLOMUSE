@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
+import concurrent.futures
 
 from solomuse_data.config import PipelineConfig
 from solomuse_data.io import read_audio
@@ -15,14 +16,70 @@ from solomuse_model.situation.vectorize import vectorize_situation_v1
 
 logger = logging.getLogger(__name__)
 
+def process_segment_situation(args: Tuple[pd.Series, Path, PipelineConfig, bool]) -> Optional[Dict]:
+    """
+    Process a single segment for situation extraction.
+    Returns a manifest row.
+    """
+    row, manifest_dir, cfg, overwrite = args
+    segment_id = row.get("segment_id", "unknown")
+    track_id = str(row.get("track_id", ""))
+    seg_dir = manifest_dir / track_id / segment_id
+    x_path = seg_dir / "x.wav"
+    
+    if not x_path.exists():
+        return None
+        
+    situation_file = seg_dir / "situation.npy"
+    
+    if situation_file.exists() and not overwrite:
+        try:
+            meta_path = seg_dir / "meta.json"
+            if meta_path.exists():
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                    if "situation" in meta:
+                        return _make_manifest_row(row, meta["situation"])
+        except:
+            pass
+
+    try:
+        audio, sr = read_audio(x_path)
+        features = extract_situation_v1(audio, sr, cfg)
+        vector = vectorize_situation_v1(features)
+        
+        if cfg.situation_save_npy:
+            np.save(situation_file, vector)
+            
+        meta_path = seg_dir / "meta.json"
+        meta = {}
+        if meta_path.exists():
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+        
+        meta["situation"] = {
+            "version": features["version"],
+            "tempo_bpm": features["tempo_bpm"],
+            "loudness_lufs": features["loudness_lufs"],
+            "rms_mean": features["rms_mean"],
+            "vector_len": len(vector)
+        }
+        
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+            
+        return _make_manifest_row(row, meta["situation"])
+        
+    except Exception as e:
+        logger.error(f"Failed to process segment {segment_id}: {e}")
+        return None
+
 def run_situation_extraction(cfg: PipelineConfig, dataset: str, limit: Optional[int] = None, overwrite: bool = False):
     """
-    Run situation extraction for a dataset of segments.
+    Run situation extraction for a dataset of segments using multiprocessing.
     """
-    logger.info(f"Running situation extraction for dataset: {dataset}")
+    logger.info(f"Running situation extraction for dataset: {dataset} with {cfg.num_workers} workers...")
     
-    # 1. Locate segment manifest
-    # Support both global and per-dataset manifest locations
     manifest_candidates = [
         Path(cfg.output_root) / "segments" / dataset / "manifest.csv",
         Path(cfg.output_root) / "manifest_segments.csv"
@@ -38,7 +95,6 @@ def run_situation_extraction(cfg: PipelineConfig, dataset: str, limit: Optional[
         logger.error(f"Segments manifest not found for {dataset}")
         return
 
-    # 2. Load manifest
     try:
         df = pd.read_csv(manifest_path)
     except Exception as e:
@@ -50,75 +106,25 @@ def run_situation_extraction(cfg: PipelineConfig, dataset: str, limit: Optional[
 
     output_manifest_rows = []
     
-    # 3. Iterate segments
-    for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Situation {dataset}"):
-        segment_id = row.get("segment_id", "unknown")
-        # Reconstruct path dynamically from manifest location
-        track_id = str(row.get("track_id", ""))
-        seg_dir = manifest_path.parent / track_id / segment_id
-        x_path = seg_dir / "x.wav"
+    tasks = [(row, manifest_path.parent, cfg, overwrite) for _, row in df.iterrows()]
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=cfg.num_workers) as executor:
+        futures = {executor.submit(process_segment_situation, task): task[0].get("segment_id", "unknown") for task in tasks}
         
-        if not x_path.exists():
-            logger.warning(f"Missing x.wav for segment {segment_id} at {seg_dir}")
-            continue
-            
-        situation_file = seg_dir / "situation.npy"
-        
-        if situation_file.exists() and not overwrite:
-            # Load existing if available and not overwriting
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Situation {dataset}"):
             try:
-                # We still want to build the manifest row
-                # Load meta to get features
-                meta_path = seg_dir / "meta.json"
-                if meta_path.exists():
-                    with open(meta_path, "r") as f:
-                        meta = json.load(f)
-                        if "situation" in meta:
-                            output_manifest_rows.append(_make_manifest_row(row, meta["situation"]))
-                            continue
-            except:
-                pass
+                result = future.result()
+                if result:
+                    output_manifest_rows.append(result)
+            except Exception as e:
+                segment_id = futures[future]
+                logger.error(f"Situation task for {segment_id} failed: {e}")
 
-        try:
-            # Load audio
-            audio, sr = read_audio(x_path)
-            
-            # Extract
-            features = extract_situation_v1(audio, sr, cfg)
-            vector = vectorize_situation_v1(features)
-            
-            # Save artifacts
-            if cfg.situation_save_npy:
-                np.save(situation_file, vector)
-                
-            # Update meta.json
-            meta_path = seg_dir / "meta.json"
-            meta = {}
-            if meta_path.exists():
-                with open(meta_path, "r") as f:
-                    meta = json.load(f)
-            
-            # Add compact summary to meta
-            meta["situation"] = {
-                "version": features["version"],
-                "tempo_bpm": features["tempo_bpm"],
-                "loudness_lufs": features["loudness_lufs"],
-                "rms_mean": features["rms_mean"],
-                "vector_len": len(vector)
-            }
-            
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
-                
-            # Prepare manifest row
-            output_manifest_rows.append(_make_manifest_row(row, meta["situation"]))
-            
-        except Exception as e:
-            logger.error(f"Failed to process segment {segment_id}: {e}")
-            continue
-
-    # 4. Write manifest_situation.csv
     if output_manifest_rows:
+        # Sort by segment_id or maintain original order? 
+        # as_completed loses order. Let's sort to be deterministic.
+        output_manifest_rows.sort(key=lambda x: str(x.get("segment_id")))
+        
         out_manifest_path = manifest_path.parent / "manifest_situation.csv"
         with open(out_manifest_path, "w", newline="") as f:
             keys = output_manifest_rows[0].keys()

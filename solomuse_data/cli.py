@@ -78,6 +78,7 @@ def main():
     parent_parser = argparse.ArgumentParser(add_help=False)
     parent_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
     parent_parser.add_argument("--dataset", type=str, required=True, help="Target dataset name (e.g., slakh, musdb)")
+    parent_parser.add_argument("--num-workers", type=int, help="Number of workers override")
 
     # Subcommands
     subparsers.add_parser("canonicalize", parents=[parent_parser], help="Canonicalize audio files")
@@ -205,8 +206,11 @@ def main():
     try:
         cfg = load_config(args.config)
     except Exception as e:
-        logger.error(f"Failed to load config: {e}")
         sys.exit(1)
+    
+    # Overrides from CLI
+    if getattr(args, "num_workers", None) is not None:
+        cfg.num_workers = args.num_workers
 
     # Dispatch command
     if args.command == "canonicalize":
