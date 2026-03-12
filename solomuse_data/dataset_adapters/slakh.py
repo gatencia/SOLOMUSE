@@ -95,6 +95,7 @@ class SlakhAdapter(DatasetAdapter):
                      
         return stems
 
+    def get_mix_path(self, track: Track) -> Optional[Path]:
         exts = [".wav", ".flac", ".mp3"]
         names = ["mix", "mixture"]
         for n in names:
