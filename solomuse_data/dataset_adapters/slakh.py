@@ -45,7 +45,7 @@ class SlakhAdapter(DatasetAdapter):
                  if (path / "stems").exists() and (path / "stems").is_dir():
                      track_id = path.name
                      tracks.append(Track(dataset="slakh", track_id=track_id, root=path))
-                 elif (path / "mix.wav").exists():
+                 elif (path / "mix.wav").exists() or (path / "mixture.wav").exists() or (path / "mix.flac").exists():
                      # Fallback if stems folder structure is flat? Slakh usually has stems dir
                      track_id = path.name
                      tracks.append(Track(dataset="slakh", track_id=track_id, root=path))
@@ -69,38 +69,39 @@ class SlakhAdapter(DatasetAdapter):
                 logger.warning(f"Failed to read metadata for {track.track_id}: {e}")
         
         if stems_dir.exists():
-            # Standard Slakh
-            for f in stems_dir.glob("*.wav"):
-                # Use filename stem (S00)
-                file_stem = f.stem
-                
-                # Look up instrument class
-                # Metadata keys are usually S00, S01... match file_stem
-                # Append instrument class to name for policy matching
-                # e.g. "S00_Guitar"
-                
-                name = file_stem
-                if file_stem in stem_meta:
-                    inst_class = stem_meta[file_stem].get("inst_class", "")
-                    if inst_class:
-                        name = f"{file_stem}_{inst_class}"
-                        
-                stems[name] = f
+            # Standard Slakh - support multiple formats
+            for f in stems_dir.iterdir():
+                if f.suffix.lower() in [".wav", ".flac", ".mp3"]:
+                    # Use filename stem (S00)
+                    file_stem = f.stem
+                    
+                    # Look up instrument class
+                    # Metadata keys are usually S00, S01... match file_stem
+                    # Append instrument class to name for policy matching
+                    # e.g. "S00_Guitar"
+                    
+                    name = file_stem
+                    if file_stem in stem_meta:
+                        inst_class = stem_meta[file_stem].get("inst_class", "")
+                        if inst_class:
+                            name = f"{file_stem}_{inst_class}"
+                            
+                    stems[name] = f
         else:
              # Flat structure fallback
-             for f in track.root.glob("*.wav"):
-                 if f.name != "mix.wav" and f.name != "mixture.wav":
+              for f in track.root.iterdir():
+                  if f.suffix.lower() in [".wav", ".flac", ".mp3"] and f.stem.lower() not in ["mix", "mixture"]:
                      stems[f.stem] = f
                      
         return stems
 
-    def get_mix_path(self, track: Track) -> Optional[Path]:
-        p = track.root / "mix.wav"
-        if p.exists():
-            return p
-        p = track.root / "mixture.wav"
-        if p.exists():
-            return p
+        exts = [".wav", ".flac", ".mp3"]
+        names = ["mix", "mixture"]
+        for n in names:
+            for e in exts:
+                p = track.root / f"{n}{e}"
+                if p.exists():
+                    return p
         return None
     
     def get_metadata(self, track: Track) -> Dict:
