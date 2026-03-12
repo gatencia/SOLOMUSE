@@ -468,6 +468,9 @@ def package(args, config_path: Path):
         return
         
     bundle_dir = args.output_root / "final_bundle"
+    if bundle_dir.exists():
+        logger.info(f"Clearing existing bundle at {bundle_dir}")
+        shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
     
     # Copy Config
