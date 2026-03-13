@@ -262,7 +262,7 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
         logger.error(f"Failed to process {track_id}: {e}. Disk Space: {free // (1024**3)}GB free of {total // (1024**3)}GB", exc_info=True)
         return {"status": "error", "track_id": track_id, "reason": f"{str(e)} (Free: {free // (1024**3)}GB)"}
 
-def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
+def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig, clean: bool = False) -> Path:
     logger.info(f"Building pairs for {dataset_name} with {cfg.num_workers} workers...")
     
     if dataset_name not in cfg.dataset_roots:
@@ -273,6 +273,10 @@ def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
     tracks = adapter.list_tracks()
     
     output_dir = Path(cfg.output_root) / "pairs" / dataset_name
+    if clean and output_dir.exists():
+        logger.info(f"Cleaning output directory: {output_dir}")
+        shutil.rmtree(output_dir)
+        
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Proactive System Check
@@ -288,8 +292,17 @@ def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
         import psutil
         mem = psutil.virtual_memory()
         logger.info(f"Available Memory: {mem.available // (1024**2)} MB / {mem.total // (1024**2)} MB")
-    except ImportError:
-        logger.info("Available Memory: psutil module not available")
+    except (ImportError, AttributeError):
+        logger.info("Available Memory: psutil module not available or limited")
+
+    try:
+        import os
+        st = os.statvfs(output_dir)
+        free_inodes = st.f_favail
+        total_inodes = st.f_files
+        logger.info(f"Inodes: Free={free_inodes}, Total={total_inodes}")
+    except (ImportError, AttributeError):
+        logger.info("Inodes: statvfs not available on this platform")
 
     total, used, free = shutil.disk_usage(output_dir)
     free_gb = free // (1024**3)

@@ -408,10 +408,10 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     """STAGE 3 - Pipeline Artifact Build"""
     banner("STAGE 3: Build Dataset Artifacts")
     base_cmd = f"solomuse_data.cli"
-    limit_suffix = f" --limit {args.limit}" if args.limit else ""
+    clean_suffix = " --clean" if getattr(args, "clean", False) else ""
     
     steps = [
-        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}"),
+        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}{clean_suffix}"),
         ("stage3_segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}"),
         ("stage3_situation", f"{base_cmd} situation --config {config_path} --dataset {args.dataset}{limit_suffix}"),
         ("stage3_intent_targets", f"{base_cmd} intent-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"),
@@ -584,7 +584,8 @@ def main():
     parser.add_argument("--verify-n", type=int, default=10)
     parser.add_argument("--tar-final-bundle", action="store_true")
     parser.add_argument("--use-wandb", action="store_true")
-    parser.add_argument("--num-workers", type=int, default=4, help="Number of CPU workers for dataset prep")
+    parser.add_argument("--num-workers", type=int, default=4, help="Number of workers for data processing")
+    parser.add_argument("--clean", action="store_true", help="Clean output directory for build-pairs stage")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")

@@ -24,9 +24,9 @@ def canonicalize(cfg: PipelineConfig, dataset: str):
     # For now, let's log that it's handled during processing.
     logger.info("Canonicalization is handled on-the-fly during build-pairs.")
 
-def build_pairs(cfg: PipelineConfig, dataset: str):
+def build_pairs(cfg: PipelineConfig, dataset: str, clean: bool = False):
     from solomuse_data.build_pairs import build_pairs_for_dataset
-    build_pairs_for_dataset(dataset, cfg)
+    build_pairs_for_dataset(dataset, cfg, clean=clean)
 
 def segment(cfg: PipelineConfig, dataset: str):
     from solomuse_data.segment import segment_dataset
@@ -82,7 +82,8 @@ def main():
 
     # Subcommands
     subparsers.add_parser("canonicalize", parents=[parent_parser], help="Canonicalize audio files")
-    subparsers.add_parser("build-pairs", parents=[parent_parser], help="Build supervised (backing, solo) pairs")
+    build_pairs_parser = subparsers.add_parser("build-pairs", parents=[parent_parser], help="Build supervised (backing, solo) pairs")
+    build_pairs_parser.add_argument("--clean", action="store_true", help="Clean output directory before starting")
     subparsers.add_parser("segment", parents=[parent_parser], help="Segment pairs into fixed windows")
     subparsers.add_parser("validate", parents=[parent_parser], help="Validate dataset integrity")
     subparsers.add_parser("run-all", parents=[parent_parser], help="Run full pipeline")
@@ -216,7 +217,7 @@ def main():
     if args.command == "canonicalize":
         canonicalize(cfg, args.dataset)
     elif args.command == "build-pairs":
-        build_pairs(cfg, args.dataset)
+        build_pairs(cfg, args.dataset, clean=getattr(args, "clean", False))
     elif args.command == "segment":
         segment(cfg, args.dataset)
     elif args.command == "validate":
