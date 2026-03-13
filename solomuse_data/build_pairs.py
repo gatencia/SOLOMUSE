@@ -276,17 +276,23 @@ def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Proactive System Check
-    import resource
-    import psutil
-    
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    mem = psutil.virtual_memory()
+    logger.info("--- System Diagnostics ---")
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        logger.info(f"File Descriptor Limits: Soft={soft}, Hard={hard}")
+    except ImportError:
+        logger.info("File Descriptor Limits: resource module not available")
+
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        logger.info(f"Available Memory: {mem.available // (1024**2)} MB / {mem.total // (1024**2)} MB")
+    except ImportError:
+        logger.info("Available Memory: psutil module not available")
+
     total, used, free = shutil.disk_usage(output_dir)
     free_gb = free // (1024**3)
-    
-    logger.info("--- System Diagnostics ---")
-    logger.info(f"File Descriptor Limits: Soft={soft}, Hard={hard}")
-    logger.info(f"Available Memory: {mem.available // (1024**2)} MB / {mem.total // (1024**2)} MB")
     logger.info(f"Free Disk Space: {free_gb} GB")
     logger.info("--------------------------")
     
