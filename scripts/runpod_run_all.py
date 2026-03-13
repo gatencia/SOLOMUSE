@@ -409,6 +409,7 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     banner("STAGE 3: Build Dataset Artifacts")
     base_cmd = f"solomuse_data.cli"
     clean_suffix = " --clean" if getattr(args, "clean", False) else ""
+    limit_suffix = f" --limit {args.limit}" if args.limit else ""
     
     steps = [
         ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}{clean_suffix}"),
