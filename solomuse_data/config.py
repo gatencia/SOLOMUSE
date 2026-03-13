@@ -28,6 +28,10 @@ class PipelineConfig(BaseModel):
     demucs_model: str = "htdemucs"
     num_workers: int = 4
     strict: bool = True
+    
+    # Storage Optimization (Set to False/FLOAT for max quality, True/PCM_16 for 500GB pods)
+    build_mono: bool = False
+    build_subtype: str = "PCM_16" # "PCM_16" or "FLOAT"
 
     # --- 3-Layer Model Configuration ---
     model_enable: bool = True

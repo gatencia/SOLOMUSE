@@ -62,7 +62,7 @@ def read_audio(path: str, ffmpeg_path: Optional[str] = None) -> Tuple[np.ndarray
         except Exception as e_gen:
              raise RuntimeError(f"Failed to read {path} via ffmpeg fallback") from e_gen
 
-def write_audio(path: str, audio: np.ndarray, sr: int):
+def write_audio(path: str, audio: np.ndarray, sr: int, subtype: str = "PCM_16"):
     """
     Write audio array to file.
     
@@ -70,6 +70,8 @@ def write_audio(path: str, audio: np.ndarray, sr: int):
         path: Output path.
         audio: Audio data (must be [T, C] float32).
         sr: Sample rate.
+        subtype: soundfile subtype (e.g., "FLOAT", "PCM_16", "PCM_24"). 
+                 PCM_16 saves 50% space vs FLOAT.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +92,7 @@ def write_audio(path: str, audio: np.ndarray, sr: int):
         raise ValueError(f"Metadata check failed for {path}: Contains {num_nan} NaNs and {num_inf} Infs.")
 
     try:
-        sf.write(str(p), audio, sr, subtype="FLOAT")
+        sf.write(str(p), audio, sr, subtype=subtype)
     except Exception as e:
         # If soundfile fails, try to get more system context
         try:

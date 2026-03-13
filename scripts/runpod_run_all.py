@@ -32,7 +32,6 @@ def get_logger(log_file: Path = None):
         sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
         logger.addHandler(sh)
-        # File handler (if provided)
         if log_file:
             log_file.parent.mkdir(parents=True, exist_ok=True)
             fh = logging.FileHandler(log_file)
@@ -411,8 +410,11 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     clean_suffix = " --clean" if getattr(args, "clean", False) else ""
     limit_suffix = f" --limit {args.limit}" if args.limit else ""
     
+    mono_suffix = " --mono" if getattr(args, "mono", False) else ""
+    subtype_suffix = f" --subtype {args.subtype}" if getattr(args, "subtype", None) else ""
+    
     steps = [
-        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}{clean_suffix}"),
+        ("stage3_build_pairs", f"{base_cmd} build-pairs --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}{clean_suffix}{mono_suffix}{subtype_suffix}"),
         ("stage3_segment", f"{base_cmd} segment --config {config_path} --dataset {args.dataset} --num-workers {args.num_workers}"),
         ("stage3_situation", f"{base_cmd} situation --config {config_path} --dataset {args.dataset}{limit_suffix}"),
         ("stage3_intent_targets", f"{base_cmd} intent-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"),
@@ -587,6 +589,8 @@ def main():
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--num-workers", type=int, default=4, help="Number of workers for data processing")
     parser.add_argument("--clean", action="store_true", help="Clean output directory for build-pairs stage")
+    parser.add_argument("--mono", action="store_true", help="Downmix to mono to save 50% space")
+    parser.add_argument("--subtype", type=str, default="PCM_16", choices=["PCM_16", "FLOAT"], help="Audio subtype (PCM_16 = 50% space)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")

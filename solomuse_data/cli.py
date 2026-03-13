@@ -24,8 +24,11 @@ def canonicalize(cfg: PipelineConfig, dataset: str):
     # For now, let's log that it's handled during processing.
     logger.info("Canonicalization is handled on-the-fly during build-pairs.")
 
-def build_pairs(cfg: PipelineConfig, dataset: str, clean: bool = False):
+def build_pairs(cfg: PipelineConfig, dataset: str, clean: bool = False, mono: bool = False, subtype: str = "PCM_16"):
     from solomuse_data.build_pairs import build_pairs_for_dataset
+    # Update config with CLI overrides
+    cfg.build_mono = mono
+    cfg.build_subtype = subtype
     build_pairs_for_dataset(dataset, cfg, clean=clean)
 
 def segment(cfg: PipelineConfig, dataset: str):
@@ -84,6 +87,8 @@ def main():
     subparsers.add_parser("canonicalize", parents=[parent_parser], help="Canonicalize audio files")
     build_pairs_parser = subparsers.add_parser("build-pairs", parents=[parent_parser], help="Build supervised (backing, solo) pairs")
     build_pairs_parser.add_argument("--clean", action="store_true", help="Clean output directory before starting")
+    build_pairs_parser.add_argument("--mono", action="store_true", help="Downmix to mono to save space")
+    build_pairs_parser.add_argument("--subtype", type=str, default="PCM_16", choices=["PCM_16", "FLOAT"], help="Audio subtype (PCM_16 is half the size of FLOAT)")
     subparsers.add_parser("segment", parents=[parent_parser], help="Segment pairs into fixed windows")
     subparsers.add_parser("validate", parents=[parent_parser], help="Validate dataset integrity")
     subparsers.add_parser("run-all", parents=[parent_parser], help="Run full pipeline")
@@ -217,7 +222,13 @@ def main():
     if args.command == "canonicalize":
         canonicalize(cfg, args.dataset)
     elif args.command == "build-pairs":
-        build_pairs(cfg, args.dataset, clean=getattr(args, "clean", False))
+        build_pairs(
+            cfg, 
+            args.dataset, 
+            clean=getattr(args, "clean", False),
+            mono=getattr(args, "mono", False),
+            subtype=getattr(args, "subtype", "PCM_16")
+        )
     elif args.command == "segment":
         segment(cfg, args.dataset)
     elif args.command == "validate":

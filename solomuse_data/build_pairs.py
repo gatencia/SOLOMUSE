@@ -88,7 +88,9 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
         # Helper to load and process format (SR/Channels) without loudness norm
         def process_stem(p):
             a, sr = read_audio(str(p))
-            a = ensure_channels(a, cfg.canonical_channels)
+            # Use build_mono to override canonical channels if requested
+            target_channels = 1 if cfg.build_mono else cfg.canonical_channels
+            a = ensure_channels(a, target_channels)
             if sr != cfg.canonical_sample_rate:
                 a = resample_audio(a, sr, cfg.canonical_sample_rate)
             return a
@@ -205,8 +207,8 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
         x_path = track_dir / "x_backing.wav"
         y_path = track_dir / "y_solo.wav"
         
-        write_audio(str(x_path), x_backing, sr)
-        write_audio(str(y_path), y_solo, sr)
+        write_audio(str(x_path), x_backing, sr, subtype=cfg.build_subtype)
+        write_audio(str(y_path), y_solo, sr, subtype=cfg.build_subtype)
         
         metadata = {
             "dataset": track.dataset, # track object provides dataset name
@@ -215,7 +217,7 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
             "solo_stems": [p.name for p in solo_paths],
             "backing_stems": [p.name for p in backing_paths],
             "sr": sr,
-            "channels": cfg.canonical_channels,
+            "channels": 1 if cfg.build_mono else cfg.canonical_channels,
             "duration_s": x_backing.shape[0] / sr,
             "stats_x": stats_x,
             "stats_y": stats_y,
@@ -247,7 +249,7 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
             "x_path_abs": str(x_path.absolute()),
             "y_path_abs": str(y_path.absolute()),
             "sr": sr,
-            "channels": cfg.canonical_channels,
+            "channels": 1 if cfg.build_mono else cfg.canonical_channels,
             "duration_s": metadata["duration_s"],
             "license": metadata["license"],
             "has_mix": has_mix,
