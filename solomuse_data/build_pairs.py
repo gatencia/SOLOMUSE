@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
@@ -256,8 +257,10 @@ def process_track(track_info: Tuple[Track, DatasetAdapter, PipelineConfig, Path]
         }
         
     except Exception as e:
-        logger.error(f"Failed to process {track_id}: {e}", exc_info=True)
-        return {"status": "error", "track_id": track_id, "reason": str(e)}
+        # Check disk space on failure
+        total, used, free = shutil.disk_usage(output_dir)
+        logger.error(f"Failed to process {track_id}: {e}. Disk Space: {free // (1024**3)}GB free of {total // (1024**3)}GB", exc_info=True)
+        return {"status": "error", "track_id": track_id, "reason": f"{str(e)} (Free: {free // (1024**3)}GB)"}
 
 def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
     logger.info(f"Building pairs for {dataset_name} with {cfg.num_workers} workers...")
@@ -271,6 +274,25 @@ def build_pairs_for_dataset(dataset_name: str, cfg: PipelineConfig) -> Path:
     
     output_dir = Path(cfg.output_root) / "pairs" / dataset_name
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Proactive System Check
+    import resource
+    import psutil
+    
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    mem = psutil.virtual_memory()
+    total, used, free = shutil.disk_usage(output_dir)
+    free_gb = free // (1024**3)
+    
+    logger.info("--- System Diagnostics ---")
+    logger.info(f"File Descriptor Limits: Soft={soft}, Hard={hard}")
+    logger.info(f"Available Memory: {mem.available // (1024**2)} MB / {mem.total // (1024**2)} MB")
+    logger.info(f"Free Disk Space: {free_gb} GB")
+    logger.info("--------------------------")
+    
+    # Heuristic: ~200MB per track for Slakh (backing + solo) if full duration
+    if dataset_name == "slakh" and len(tracks) > 2000 and free_gb < 400:
+        logger.warning(f"CAUTION: Slakh full dataset requires ~400GB of disk space. You only have {free_gb}GB free.")
     
     manifest_rows = []
     skipped_rows = []

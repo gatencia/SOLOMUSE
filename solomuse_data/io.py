@@ -83,4 +83,22 @@ def write_audio(path: str, audio: np.ndarray, sr: int):
         # "Ensure float32 output" implies we should convert if not.
         audio = audio.astype(np.float32)
 
-    sf.write(str(p), audio, sr, subtype="FLOAT")
+    if not np.isfinite(audio).all():
+        # Check for NaNs/Infs which cause libsndfile to crash or error
+        num_nan = np.isnan(audio).sum()
+        num_inf = np.isinf(audio).sum()
+        raise ValueError(f"Metadata check failed for {path}: Contains {num_nan} NaNs and {num_inf} Infs.")
+
+    try:
+        sf.write(str(p), audio, sr, subtype="FLOAT")
+    except Exception as e:
+        # If soundfile fails, try to get more system context
+        try:
+            import os
+            # List open files for this process if possible
+            fds = os.listdir('/proc/self/fd') if os.path.exists('/proc/self/fd') else []
+            fd_count = len(fds)
+        except:
+            fd_count = -1
+        
+        raise RuntimeError(f"soundfile.write failed for {p}. Error: {e}. Open FDs: {fd_count}")
