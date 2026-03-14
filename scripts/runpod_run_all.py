@@ -196,7 +196,7 @@ def setup_python(args, repo_root: Path):
         # 0.6 Verification
         if not is_done(args.output_root, "stage0_6_verification"):
             logger.info("Verifying environment...")
-            verify_script = f"""
+            verify_script = """
 import torch
 import sys
 import os
