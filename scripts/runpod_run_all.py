@@ -212,7 +212,11 @@ else:
 print(f'Torch Threads: {torch.get_num_threads()}')
 print(f'OMP_NUM_THREADS: {os.environ.get("OMP_NUM_THREADS", "Not Set")}')
 """
-            run_cmd(f"{python_bin} -c \"{verify_script}\"")
+            verify_file = args.output_root / "verify_env.py"
+            with open(verify_file, "w") as f:
+                f.write(verify_script)
+            
+            run_cmd(f"{python_bin} {verify_file}")
             
             # Safety check for vendored torch
             safety_script = """
@@ -224,7 +228,11 @@ if 'vendored_deps' in path:
     print('Please remove it and ensure pip-installed torch is used.')
     sys.exit(1)
 """
-            run_cmd(f"{python_bin} -c \"{safety_script}\"")
+            safety_file = args.output_root / "verify_safety.py"
+            with open(safety_file, "w") as f:
+                f.write(safety_script)
+                
+            run_cmd(f"{python_bin} {safety_file}")
             mark_done(args.output_root, "stage0_6_verification")
             
         mark_done(args.output_root, "stage0_env_setup")
