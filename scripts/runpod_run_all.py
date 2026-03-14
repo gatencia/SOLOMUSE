@@ -459,23 +459,29 @@ def discover_and_symlink_artifacts(args):
             if sr == args.output_root: continue
             if not sr.exists(): continue
             
-            if is_done(sr, marker):
-                source_path = sr / folder_name
-                dest_path = args.output_root / folder_name
-                
-                if source_path.exists() and not dest_path.exists():
-                    logger.info(f"PRO-TIP: Found existing {marker} at {source_path}. Symlinking to skip processing.")
+            # More robust check: folder must exist and be non-empty
+            source_path = sr / folder_name
+            dest_path = args.output_root / folder_name
+            
+            if source_path.exists() and any(source_path.iterdir()):
+                if not dest_path.exists():
+                    logger.info(f"PRO-TIP: Found existing {folder_name} at {source_path}. Symlinking to skip processing.")
                     args.output_root.mkdir(parents=True, exist_ok=True)
                     try:
                         os.symlink(source_path, dest_path)
                         mark_done(args.output_root, marker)
-                        # Special: If we symlinked segments, stages 3c and 3d are ALSO done
-                        if marker == "stage3_segment":
-                            if is_done(sr, "stage3_situation"): mark_done(args.output_root, "stage3_situation")
-                            if is_done(sr, "stage3_intent_targets"): mark_done(args.output_root, "stage3_intent_targets")
+                        # Special: If we symlinked segments, stages 3c and 3d are effectively done too
+                        if folder_name == "segments":
+                            mark_done(args.output_root, "stage3_situation")
+                            mark_done(args.output_root, "stage3_intent_targets")
                         break
                     except Exception as e:
                         logger.warning(f"Failed to symlink {source_path}: {e}")
+                else:
+                    # Already exists or symlinked, just mark as done if not already
+                    if not is_done(args.output_root, marker):
+                        mark_done(args.output_root, marker)
+                    break
 
 def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str, global_root: Path = None):
     """Helper to run a pipeline command using the venv python"""
