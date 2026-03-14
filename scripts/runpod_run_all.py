@@ -62,15 +62,26 @@ def run_cmd(cmd: str, env: dict = None, dry_run: bool = False, cwd: Path = None,
             sys.exit(1)
     return result
 
-def is_done(root: Path, step_name: str) -> bool:
+def is_done(root: Path, step_name: str, global_root: Path = None) -> bool:
     marker_dir = root / ".done"
-    return (marker_dir / f"{step_name}.done").exists()
+    if (marker_dir / f"{step_name}.done").exists():
+        return True
+    if global_root:
+        global_marker = global_root / ".done_global" / f"{step_name}.done"
+        return global_marker.exists()
+    return False
 
-def mark_done(root: Path, step_name: str):
+def mark_done(root: Path, step_name: str, global_root: Path = None):
     marker_dir = root / ".done"
     marker_dir.mkdir(parents=True, exist_ok=True)
     with open(marker_dir / f"{step_name}.done", "w") as f:
         f.write(str(time.time()))
+    
+    if global_root:
+        global_marker_dir = global_root / ".done_global"
+        global_marker_dir.mkdir(parents=True, exist_ok=True)
+        with open(global_marker_dir / f"{step_name}.done", "w") as f:
+            f.write(str(time.time()))
 
 def get_disk_free(path: Path) -> float:
     """Returns free space in GB"""
@@ -415,20 +426,60 @@ def acquire_dataset(args):
                 logger.error("=" * 60)
                 sys.exit(1)
                 
-        num_tracks = len(list(args.slakh_root.glob("Track*")))
+        num_tracks = len(list(args.slakh_root.glob("Track*"))) or len(list(args.slakh_root.glob("*/Track*")))
         logger.info(f"Acquisition complete. Tracks: {num_tracks}")
-        mark_done(args.output_root, "stage2_acquire")
+        mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
     else:
         logger.info("Stage 2 already completed.")
     
-    # Optional: Run cleanup immediately after acquisition if disk is tight
-    if not args.dry_run and get_disk_free(args.slakh_root) < 200:
-        logger.info("Disk space tight after acquisition. Triggering preliminary cleanup...")
-        run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
+def discover_and_symlink_artifacts(args):
+    """
+    Looks for architecture-neutral artifacts (pairs, segments) in other runs 
+    and symlinks them to the current run directory to skip processing.
+    """
+    if args.dry_run: return
+    
+    # Map marker names to top-level folder inside run directory
+    stages_to_folders = {
+        "stage3_build_pairs": "pairs",
+        "stage3_segment": "segments"
+    }
+    
+    # Standard locations to search (previous default runs)
+    search_roots = [
+        args.persistent_root / "SOLOMUSE_RUNS" / "solomuse_v2_run",
+        args.persistent_root / "SOLOMUSE_RUNS" / "solomuse_baseline",
+    ]
+    
+    for marker, folder_name in stages_to_folders.items():
+        if is_done(args.output_root, marker):
+            continue
+            
+        for sr in search_roots:
+            if sr == args.output_root: continue
+            if not sr.exists(): continue
+            
+            if is_done(sr, marker):
+                source_path = sr / folder_name
+                dest_path = args.output_root / folder_name
+                
+                if source_path.exists() and not dest_path.exists():
+                    logger.info(f"PRO-TIP: Found existing {marker} at {source_path}. Symlinking to skip processing.")
+                    args.output_root.mkdir(parents=True, exist_ok=True)
+                    try:
+                        os.symlink(source_path, dest_path)
+                        mark_done(args.output_root, marker)
+                        # Special: If we symlinked segments, stages 3c and 3d are ALSO done
+                        if marker == "stage3_segment":
+                            if is_done(sr, "stage3_situation"): mark_done(args.output_root, "stage3_situation")
+                            if is_done(sr, "stage3_intent_targets"): mark_done(args.output_root, "stage3_intent_targets")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to symlink {source_path}: {e}")
 
-def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str):
+def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str, global_root: Path = None):
     """Helper to run a pipeline command using the venv python"""
-    if not is_done(args.output_root, step_name):
+    if not is_done(args.output_root, step_name, global_root=global_root):
         logger.info(f"Running step: {step_name}")
         # Explicitly set PYTHONPATH and limit CPU threading for data workers
         repo_root = args.persistent_root / "repos" / "SOLOMUSE"
@@ -445,12 +496,13 @@ def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str,
         run_cmd(full_cmd, env=custom_env, dry_run=args.dry_run)
         
         if not args.dry_run:
-            mark_done(args.output_root, step_name)
+            mark_done(args.output_root, step_name, global_root=global_root)
     else:
         logger.info(f"Step {step_name} already completed.")
 
 def build_artifacts(args, python_bin: Path, config_path: Path):
     """STAGE 3 - Pipeline Artifact Build"""
+    discover_and_symlink_artifacts(args)
     banner("STAGE 3: Build Dataset Artifacts")
     base_cmd = f"solomuse_data.cli"
     clean_suffix = " --clean" if getattr(args, "clean", False) else ""
@@ -467,7 +519,7 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     ]
     
     for marker, cmd in steps:
-        run_pipeline_step(args, python_bin, config_path, marker, cmd)
+        run_pipeline_step(args, python_bin, config_path, marker, cmd, global_root=args.persistent_root)
         
     # Crucial Cleanup after segmentation (Stage 3b) to free up space for Stage 4 targets
     if not args.dry_run:
