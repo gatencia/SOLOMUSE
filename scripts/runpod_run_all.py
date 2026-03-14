@@ -550,14 +550,22 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     ]
     
     for marker, cmd in steps:
-        # SELF-HEALING: If segments are marked done but missing audio (needed for Pro), reset
-        if marker == "stage3_segment" and not args.baseline and is_done(args.output_root, marker):
-            seg_dir = args.output_root / "segments"
-            # Check a few random folders for y.wav
-            has_audio = seg_dir.exists() and any(seg_dir.glob("*/Track*/y.wav"))
-            if not has_audio:
-                logger.warning(f"Self-Healing: {marker} is DONE but segments are missing audio (y.wav). Resetting...")
-                (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+        # SELF-HEALING: Check for physical presence of manifests/audio
+        if is_done(args.output_root, marker):
+            if marker == "stage3_build_pairs":
+                # Check for pairs manifest
+                pairs_manifest = args.output_root / "pairs" / args.dataset / "manifest.csv"
+                if not pairs_manifest.exists():
+                    logger.warning(f"Self-Healing: {marker} is DONE but manifest is missing at {pairs_manifest}. Resetting...")
+                    (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+            
+            elif marker == "stage3_segment" and not args.baseline:
+                seg_dir = args.output_root / "segments"
+                # Check a few random folders for y.wav
+                has_audio = seg_dir.exists() and any(seg_dir.glob("*/Track*/y.wav"))
+                if not has_audio:
+                    logger.warning(f"Self-Healing: {marker} is DONE but segments are missing audio (y.wav). Resetting...")
+                    (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
                 
         run_pipeline_step(args, python_bin, config_path, marker, cmd, global_root=args.persistent_root)
         
