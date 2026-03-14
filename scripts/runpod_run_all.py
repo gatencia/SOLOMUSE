@@ -121,6 +121,38 @@ def robust_download(url: str, dest_path: Path, dry_run: bool = False):
     
     run_cmd(cmd)
 
+def extract_archive_robust(archive_path: Path, dest_dir: Path, dry_run: bool = False) -> bool:
+    """Extract zip/tar/tar.gz archives with fallbacks for mis-labeled files."""
+    if dry_run:
+        return True
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    archive = str(archive_path)
+    dest = str(dest_dir)
+
+    # Ordered strategies:
+    # 1) Extension-based extraction (fast path)
+    # 2) gzip stream -> tar stdin (works for real gz regardless of filename)
+    # 3) raw stream -> tar stdin (works for plain tar even if named .tar.gz)
+    if archive_path.suffix.lower() == ".zip":
+        attempts = [
+            f"unzip -q '{archive}' -d '{dest}'"
+        ]
+    else:
+        attempts = [
+            f"tar --no-same-owner -xf '{archive}' -C '{dest}' --strip-components=1",
+            f"gzip -dc '{archive}' | tar --no-same-owner -x -f - -C '{dest}' --strip-components=1",
+            f"cat '{archive}' | tar --no-same-owner -x -f - -C '{dest}' --strip-components=1",
+        ]
+
+    for i, cmd in enumerate(attempts, start=1):
+        logger.info(f"Extraction attempt {i}/{len(attempts)}")
+        result = run_cmd(cmd, dry_run=dry_run, fatal=False)
+        if result and result.returncode == 0:
+            return True
+
+    return False
+
 @retry_wrapper
 def bootstrap_system(args):
     """STAGE -1: Install system dependencies"""
@@ -383,10 +415,11 @@ def acquire_dataset(args):
                 if args.slakh_archive and Path(args.slakh_archive).exists():
                     logger.info(f"Using local archive: {args.slakh_archive}")
                     archive_path = Path(args.slakh_archive)
-                    if archive_path.suffix == ".zip":
-                        run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
-                    else:
-                        run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                    logger.info("Extracting dataset...")
+                    ok = extract_archive_robust(archive_path, args.slakh_root, dry_run=args.dry_run)
+                    if not ok:
+                        logger.error(f"Failed to extract local archive: {archive_path}")
+                        sys.exit(1)
                 elif args.slakh_url:
                     archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
                     # Use persistent_root for the archive as well to leverage network volumes
@@ -407,10 +440,10 @@ def acquire_dataset(args):
                     
                     logger.info("Extracting dataset...")
                     try:
-                        if ".tar.gz" in args.slakh_url:
-                            run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
-                        else:
-                            run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                        ok = extract_archive_robust(archive_path, args.slakh_root, dry_run=args.dry_run)
+                        if not ok:
+                            logger.error(f"Failed to extract downloaded archive: {archive_path}")
+                            sys.exit(1)
                     except Exception as e:
                         logger.error(f"Extraction failed. Your disk might be full. Note: The 100GB dataset needs ~200GB of total free space during extraction (100GB archive + 100GB extracted files).")
                         logger.info("If you want to free up space and try again, you can manually delete the archive and run with the Tiny BabySlakh dataset.")
