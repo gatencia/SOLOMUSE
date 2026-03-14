@@ -30,7 +30,7 @@ def run_renderer_token_build(cfg: PipelineConfig, dataset: str, limit: Optional[
         df = create_track_grouped_splits(manifest_path, split_manifest_path, cfg, force_regenerate=False)
     except Exception as e:
         logger.error(f"Failed to load or generate splits for token targets: {e}")
-        return
+        raise RuntimeError(f"Renderer token build failed while creating splits: {e}") from e
 
     if limit:
         df = df.head(limit)
@@ -43,11 +43,12 @@ def run_renderer_token_build(cfg: PipelineConfig, dataset: str, limit: Optional[
             from solomuse_model.renderer.encodec_adapter import EnCodecAdapter
             codec = EnCodecAdapter()
         except Exception as e:
-            logger.warning(f"Failed to initialize EnCodecAdapter: {e}")
-            codec = None
+            logger.error(f"Failed to initialize EnCodecAdapter: {e}")
+            raise RuntimeError(f"Renderer token build failed to initialize EnCodecAdapter: {e}") from e
     else:
-        logger.error(f"Renderer tokens require encodec representation, got: {cfg.renderer_representation}")
-        return
+        msg = f"Renderer tokens require encodec representation, got: {cfg.renderer_representation}"
+        logger.error(msg)
+        raise ValueError(msg)
 
     # 3. Process
     for _, row in tqdm(df.iterrows(), total=len(df), desc=f"RendererTokens {dataset}"):

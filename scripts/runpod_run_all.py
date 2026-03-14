@@ -347,6 +347,15 @@ def acquire_dataset(args):
     if found_root:
         logger.info(f"Discovery: Found dataset at {found_root}")
         args.slakh_root = found_root
+
+    # Self-heal stale done marker if dataset is no longer present.
+    if is_done(args.output_root, "stage2_acquire") and not found_root and not args.dry_run:
+        logger.warning(
+            "Self-Healing: stage2_acquire is DONE but no dataset was discovered in standard locations. "
+            "Invalidating stage2_acquire marker."
+        )
+        (args.output_root / ".done" / "stage2_acquire.done").unlink(missing_ok=True)
+        (args.persistent_root / ".done_global" / "stage2_acquire.done").unlink(missing_ok=True)
     
     if not is_done(args.output_root, "stage2_acquire") and not args.dry_run:
         if found_root:
@@ -431,6 +440,67 @@ def acquire_dataset(args):
             mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
     else:
         logger.info("Stage 2 already completed.")
+
+def _csv_has_data_rows(path: Path) -> bool:
+    """True if CSV exists and has at least one data row (excluding header)."""
+    if not path.exists():
+        return False
+    try:
+        with open(path, "r", newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # header
+            for _ in reader:
+                return True
+        return False
+    except Exception:
+        return False
+
+def _validate_step_outputs(args, step_name: str) -> tuple[bool, str]:
+    """Post-run artifact checks to prevent marking empty/no-op stages as complete."""
+    root = args.output_root
+    dataset = args.dataset
+    # Mock dataset can be intentionally tiny/empty in some debug paths.
+    enforce_non_empty = dataset != "mock"
+
+    if step_name == "stage3_build_pairs":
+        p = root / "pairs" / dataset / "manifest.csv"
+        if not p.exists():
+            return False, f"pairs manifest missing at {p}"
+        if enforce_non_empty and not _csv_has_data_rows(p):
+            return False, f"pairs manifest has 0 rows at {p}"
+        return True, ""
+
+    if step_name == "stage3_segment":
+        p = root / "segments" / dataset / "manifest.csv"
+        if not p.exists():
+            return False, f"segment manifest missing at {p}"
+        if enforce_non_empty and not _csv_has_data_rows(p):
+            return False, f"segment manifest has 0 rows at {p}"
+        return True, ""
+
+    if step_name == "stage3_situation":
+        seg_dir = root / "segments" / dataset
+        if not any(seg_dir.glob("*/Track*/situation.npy")):
+            return False, f"no situation.npy files found under {seg_dir}"
+        return True, ""
+
+    if step_name == "stage3_intent_targets":
+        p = root / "segments" / dataset / "manifest_intent.csv"
+        if not p.exists():
+            return False, f"intent manifest missing at {p}"
+        if enforce_non_empty and not _csv_has_data_rows(p):
+            return False, f"intent manifest has 0 rows at {p}"
+        return True, ""
+
+    if step_name == "stage4_tokenize_v2":
+        p = root / "segments" / dataset / "manifest_renderer_splits.csv"
+        if not p.exists():
+            return False, f"renderer split manifest missing at {p}"
+        if enforce_non_empty and not _csv_has_data_rows(p):
+            return False, f"renderer split manifest has 0 rows at {p}"
+        return True, ""
+
+    return True, ""
     
 def discover_and_symlink_artifacts(args):
     """
@@ -541,6 +611,13 @@ def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str,
         
         full_cmd = f"{python_bin} -m {cmd}"
         run_cmd(full_cmd, env=custom_env, dry_run=args.dry_run)
+
+        if not args.dry_run:
+            ok, reason = _validate_step_outputs(args, step_name)
+            if not ok:
+                logger.error(f"Post-check failed for {step_name}: {reason}")
+                logger.error("Stopping early to prevent cascading failures from empty/missing artifacts.")
+                sys.exit(1)
         
         if not args.dry_run:
             mark_done(args.output_root, step_name, global_root=global_root)
