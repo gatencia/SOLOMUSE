@@ -470,8 +470,9 @@ def discover_and_symlink_artifacts(args):
                     try:
                         os.symlink(source_path, dest_path)
                         mark_done(args.output_root, marker)
-                        # Special: If we symlinked segments, stages 3c and 3d are effectively done too
+                        # Special: If we recovered segments, ALL preceding Stage 3 steps are effectively done
                         if folder_name == "segments":
+                            mark_done(args.output_root, "stage3_build_pairs")
                             mark_done(args.output_root, "stage3_situation")
                             mark_done(args.output_root, "stage3_intent_targets")
                         break
