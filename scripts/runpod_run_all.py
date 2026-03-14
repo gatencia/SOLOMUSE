@@ -496,6 +496,8 @@ def discover_and_symlink_artifacts(args):
                         if folder_name == "segments":
                              mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
                              mark_done(args.output_root, "stage3_build_pairs")
+                             mark_done(args.output_root, "stage3_situation")
+                             mark_done(args.output_root, "stage3_intent_targets")
                         break
 
 def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str, global_root: Path = None):
@@ -542,9 +544,10 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     for marker, cmd in steps:
         run_pipeline_step(args, python_bin, config_path, marker, cmd, global_root=args.persistent_root)
         
-    # Crucial Cleanup after segmentation (Stage 3b) to free up space for Stage 4 targets
-    if not args.dry_run:
-        logger.info("STAGE 3 Artifacts complete. Triggering aggressive cleanup to free up quota for Stage 4 targets...")
+    # If baseline, we can clean up now because Stage 4 v1 creates its own targets.
+    # If Pro mode, we MUST wait until AFTER tokenize (Stage 4 v2) is done.
+    if args.baseline and not args.dry_run:
+        logger.info("STAGE 3 Artifacts complete (Baseline). Triggering early cleanup...")
         run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
 
 def tokenize(args, python_bin: Path, config_path: Path):
@@ -559,6 +562,11 @@ def tokenize(args, python_bin: Path, config_path: Path):
         limit_suffix = f" --limit {args.limit}" if args.limit else ""
         cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
         run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v2", cmd)
+        
+        # Cleanup for Pro mode after tokenization
+        if not args.dry_run:
+            logger.info("STAGE 4 Tokenization complete. Triggering post-token cleanup...")
+            run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
 
 def train(args, python_bin: Path, config_path: Path):
     """STAGE 5 - Training"""
