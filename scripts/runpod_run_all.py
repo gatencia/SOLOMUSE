@@ -328,9 +328,13 @@ def acquire_dataset(args):
         
         found_root = None
         for pr in possible_roots:
-            if pr.exists() and any(pr.glob("Track*")):
-                found_root = pr
-                break
+            if pr.exists():
+                # Check for tracks at root or in common sub-directories (Slakh structure)
+                has_tracks = any(pr.glob("Track*")) or any(pr.glob("*/Track*"))
+                has_splits = (pr / "train").exists() or (pr / "validation").exists()
+                if has_tracks or has_splits:
+                    found_root = pr
+                    break
         
         if found_root:
             logger.info(f"PRO-TIP: Found existing dataset at {found_root}. Using it to skip download.")
@@ -341,7 +345,7 @@ def acquire_dataset(args):
         logger.info(f"No existing dataset found in standard locations. Proceeding with acquisition in {args.slakh_root}")
         args.slakh_root.mkdir(parents=True, exist_ok=True)
         
-        has_tracks = any(args.slakh_root.glob("Track*"))
+        has_tracks = any(args.slakh_root.glob("Track*")) or any(args.slakh_root.glob("*/Track*"))
         if has_tracks:
             logger.info(f"Found existing tracks in {args.slakh_root}, skipping download.")
         else:
