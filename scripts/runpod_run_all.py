@@ -256,15 +256,14 @@ def write_pipeline_config(args, config_path: Path):
     """STAGE 1 - Generate Config YAML"""
     banner("STAGE 1: Generating Solomuse Config")
     
-    if not is_done(args.output_root, "stage1_config") and not args.dry_run:
-        # --- Architecture Scaling ---
-        pro_mode = getattr(args, "pro", False)
-        intent_d_model = 512 if pro_mode else 256
-        intent_layers = 12 if pro_mode else 6
-        renderer_d_model = 1024 if pro_mode else 768
-        renderer_layers = 16 if pro_mode else 12
+    # --- Architecture Scaling ---
+    pro_mode = getattr(args, "pro", False)
+    intent_d_model = 512 if pro_mode else 256
+    intent_layers = 12 if pro_mode else 6
+    renderer_d_model = 1024 if pro_mode else 768
+    renderer_layers = 16 if pro_mode else 12
 
-        config_yaml = f"""# Auto-generated RunPod Config
+    config_yaml = f"""# Auto-generated RunPod Config
 output_root: {args.output_root}
 dataset_roots:
   {args.dataset}: {args.slakh_root}
@@ -312,12 +311,11 @@ inference_temperature: 0.9
 inference_top_k: 50
 inference_top_p: 0.95
 """
+    if not args.dry_run:
         with open(config_path, "w") as f:
             f.write(config_yaml)
         logger.info(f"Wrote config to {config_path}")
         mark_done(args.output_root, "stage1_config")
-    else:
-        logger.info(f"Stage 1 already completed. Config at {config_path}")
 
 def acquire_dataset(args):
     """STAGE 2 - Acquire Slakh2100"""
@@ -851,10 +849,11 @@ def main():
     repo_root = clone_repo(args)
     python_bin = setup_python(args, repo_root)
     
+    acquire_dataset(args)
+    
     config_path = args.output_root / "runpod_pipeline.yaml"
     write_pipeline_config(args, config_path)
     
-    acquire_dataset(args)
     build_artifacts(args, python_bin, config_path)
     tokenize(args, python_bin, config_path)
     train(args, python_bin, config_path)
