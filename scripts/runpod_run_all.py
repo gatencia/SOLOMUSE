@@ -327,108 +327,110 @@ def acquire_dataset(args):
         logger.info("Using mock dataset, skipping acquisition.")
         return
         
+    # Discovery: Check multiple locations for existing data
+    possible_roots = [
+        args.slakh_root,
+        args.persistent_root / "slakh2100",
+        Path("/workspace/datasets/slakh2100"),
+        Path("/runpod-volume/datasets/slakh2100"),
+        Path("/workspace/slakh2100")
+    ]
+    
+    found_root = None
+    for pr in possible_roots:
+        if pr.exists():
+            # Check for tracks at root or in common sub-directories (Slakh structure)
+            has_tracks = any(pr.glob("Track*")) or any(pr.glob("*/Track*"))
+            has_splits = (pr / "train").exists() or (pr / "validation").exists()
+            if has_tracks or has_splits:
+                found_root = pr
+                break
+    
+    if found_root:
+        logger.info(f"Discovery: Found dataset at {found_root}")
+        args.slakh_root = found_root
+    
     if not is_done(args.output_root, "stage2_acquire") and not args.dry_run:
-        # Discovery: Check multiple locations for existing data
-        possible_roots = [
-            args.slakh_root,
-            args.persistent_root / "slakh2100",
-            Path("/workspace/datasets/slakh2100"),
-            Path("/runpod-volume/datasets/slakh2100"),
-            Path("/workspace/slakh2100")
-        ]
-        
-        found_root = None
-        for pr in possible_roots:
-            if pr.exists():
-                # Check for tracks at root or in common sub-directories (Slakh structure)
-                has_tracks = any(pr.glob("Track*")) or any(pr.glob("*/Track*"))
-                has_splits = (pr / "train").exists() or (pr / "validation").exists()
-                if has_tracks or has_splits:
-                    found_root = pr
-                    break
-        
         if found_root:
-            logger.info(f"PRO-TIP: Found existing dataset at {found_root}. Using it to skip download.")
-            args.slakh_root = found_root
-            mark_done(args.output_root, "stage2_acquire")
-            return
-
-        logger.info(f"No existing dataset found in standard locations. Proceeding with acquisition in {args.slakh_root}")
-        args.slakh_root.mkdir(parents=True, exist_ok=True)
-        
-        has_tracks = any(args.slakh_root.glob("Track*")) or any(args.slakh_root.glob("*/Track*"))
-        if has_tracks:
-            logger.info(f"Found existing tracks in {args.slakh_root}, skipping download.")
+            logger.info("Dataset found, marking acquisition as complete.")
+            mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
         else:
-            # Check Disk Space (Slakh2100 is ~100GB extracted)
-            free_gb = get_disk_free(args.slakh_root)
-            logger.info(f"Free space on {args.slakh_root.parent}: {free_gb:.2f} GB")
-            # If tiny mode, we only need ~1-2GB
-            min_space = 2 if getattr(args, "tiny", False) else 150
-            if free_gb < min_space: # Safety margin
-                logger.error(f"Insufficient disk space! Need ~{min_space}GB, have {free_gb:.2f}GB.")
-                if not getattr(args, "tiny", False):
-                    logger.info("TIP: Run with --tiny to use a much smaller dataset (BabySlakh) that fits on small pods.")
-                sys.exit(1)
+            logger.info(f"No existing dataset found in standard locations. Proceeding with acquisition in {args.slakh_root}")
+            args.slakh_root.mkdir(parents=True, exist_ok=True)
+            
+            has_tracks = any(args.slakh_root.glob("Track*")) or any(args.slakh_root.glob("*/Track*"))
+            if has_tracks:
+                logger.info(f"Found existing tracks in {args.slakh_root}, skipping download.")
+            else:
+                # Check Disk Space (Slakh2100 is ~100GB extracted)
+                free_gb = get_disk_free(args.slakh_root)
+                logger.info(f"Free space on {args.slakh_root.parent}: {free_gb:.2f} GB")
+                # If tiny mode, we only need ~1-2GB
+                min_space = 2 if getattr(args, "tiny", False) else 150
+                if free_gb < min_space: # Safety margin
+                    logger.error(f"Insufficient disk space! Need ~{min_space}GB, have {free_gb:.2f}GB.")
+                    if not getattr(args, "tiny", False):
+                        logger.info("TIP: Run with --tiny to use a much smaller dataset (BabySlakh) that fits on small pods.")
+                    sys.exit(1)
 
-            if args.slakh_archive and Path(args.slakh_archive).exists():
-                logger.info(f"Using local archive: {args.slakh_archive}")
-                archive_path = Path(args.slakh_archive)
-                if archive_path.suffix == ".zip":
-                    run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                if args.slakh_archive and Path(args.slakh_archive).exists():
+                    logger.info(f"Using local archive: {args.slakh_archive}")
+                    archive_path = Path(args.slakh_archive)
+                    if archive_path.suffix == ".zip":
+                        run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                    else:
+                        run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                elif args.slakh_url:
+                    archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
+                    # Use persistent_root for the archive as well to leverage network volumes
+                    archive_path = args.persistent_root / archive_name
+                    logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
+                    
+                    try:
+                        robust_download(args.slakh_url, archive_path)
+                    except SystemExit:
+                        logger.error("=" * 60)
+                        logger.error(" DOWNLOAD FAILED: Disk Quota Exceeded")
+                        logger.error("-" * 60)
+                        logger.error(" Your Pod's disk volume is likely too small for the 100GB Slakh dataset.")
+                        logger.error(" To fix this, run with the 'Tiny' BabySlakh dataset instead:")
+                        logger.error(" python runpod_run_all.py --baseline --tiny")
+                        logger.error("=" * 60)
+                        sys.exit(1)
+                    
+                    logger.info("Extracting dataset...")
+                    try:
+                        if ".tar.gz" in args.slakh_url:
+                            run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
+                        else:
+                            run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
+                    except Exception as e:
+                        logger.error(f"Extraction failed. Your disk might be full. Note: The 100GB dataset needs ~200GB of total free space during extraction (100GB archive + 100GB extracted files).")
+                        logger.info("If you want to free up space and try again, you can manually delete the archive and run with the Tiny BabySlakh dataset.")
+                        raise e
+                        
+                    logger.info("Cleaning up archive to save space...")
+                    if archive_path.exists():
+                        archive_path.unlink()
                 else:
-                    run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
-            elif args.slakh_url:
-                archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
-                # Use persistent_root for the archive as well to leverage network volumes
-                archive_path = args.persistent_root / archive_name
-                logger.info(f"Downloading dataset from {args.slakh_url} to {archive_path}")
-                
-                try:
-                    robust_download(args.slakh_url, archive_path)
-                except SystemExit:
                     logger.error("=" * 60)
-                    logger.error(" DOWNLOAD FAILED: Disk Quota Exceeded")
+                    logger.error(" DATASET ACQUISITION FAILED")
                     logger.error("-" * 60)
-                    logger.error(" Your Pod's disk volume is likely too small for the 100GB Slakh dataset.")
-                    logger.error(" To fix this, run with the 'Tiny' BabySlakh dataset instead:")
-                    logger.error(" python runpod_run_all.py --baseline --tiny")
+                    logger.error(" No dataset found and no download source specified.")
+                    logger.error(" If you hit a 'Disk quota exceeded' error, it means your pod's disk is too small.")
+                    logger.error(" To fix this, you have two options:")
+                    logger.error(" 1. Use the 'Tiny' BabySlakh (0.3GB - recommended for verification):")
+                    logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1")
+                    logger.error(" 2. Run with the official Slakh2100 Redux URL (100GB - requires large disk/volume):")
+                    logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1")
+                    logger.error(" 3. Run a smoke test with mock data (fastest):")
+                    logger.error("    python scripts/runpod_run_all.py --smoke-test")
                     logger.error("=" * 60)
                     sys.exit(1)
-                
-                logger.info("Extracting dataset...")
-                try:
-                    if ".tar.gz" in args.slakh_url:
-                        run_cmd(f"tar --no-same-owner -xf {archive_path} -C {args.slakh_root} --strip-components=1")
-                    else:
-                        run_cmd(f"unzip -q {archive_path} -d {args.slakh_root}")
-                except Exception as e:
-                    logger.error(f"Extraction failed. Your disk might be full. Note: The 100GB dataset needs ~200GB of total free space during extraction (100GB archive + 100GB extracted files).")
-                    logger.info("If you want to free up space and try again, you can manually delete the archive and run with the Tiny BabySlakh dataset.")
-                    raise e
                     
-                logger.info("Cleaning up archive to save space...")
-                if archive_path.exists():
-                    archive_path.unlink()
-            else:
-                logger.error("=" * 60)
-                logger.error(" DATASET ACQUISITION FAILED")
-                logger.error("-" * 60)
-                logger.error(" No dataset found and no download source specified.")
-                logger.error(" If you hit a 'Disk quota exceeded' error, it means your pod's disk is too small.")
-                logger.error(" To fix this, you have two options:")
-                logger.error(" 1. Use the 'Tiny' BabySlakh (0.3GB - recommended for verification):")
-                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1")
-                logger.error(" 2. Run with the official Slakh2100 Redux URL (100GB - requires large disk/volume):")
-                logger.error("    python scripts/runpod_run_all.py --slakh-url https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1")
-                logger.error(" 3. Run a smoke test with mock data (fastest):")
-                logger.error("    python scripts/runpod_run_all.py --smoke-test")
-                logger.error("=" * 60)
-                sys.exit(1)
-                
-        num_tracks = len(list(args.slakh_root.glob("Track*"))) or len(list(args.slakh_root.glob("*/Track*")))
-        logger.info(f"Acquisition complete. Tracks: {num_tracks}")
-        mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
+            num_tracks = len(list(args.slakh_root.glob("Track*"))) or len(list(args.slakh_root.glob("*/Track*")))
+            logger.info(f"Acquisition complete. Tracks: {num_tracks}")
+            mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
     else:
         logger.info("Stage 2 already completed.")
     
@@ -568,20 +570,43 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     for marker, cmd in steps:
         # SELF-HEALING: Check for physical presence of manifests/audio
         if is_done(args.output_root, marker):
+            should_reset = False
+            
             if marker == "stage3_build_pairs":
-                # Check for pairs manifest
                 pairs_manifest = args.output_root / "pairs" / args.dataset / "manifest.csv"
                 if not pairs_manifest.exists():
-                    logger.warning(f"Self-Healing: {marker} is DONE but manifest is missing at {pairs_manifest}. Resetting...")
-                    (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+                    logger.warning(f"Self-Healing: {marker} is DONE but manifest is missing at {pairs_manifest}.")
+                    should_reset = True
             
-            elif marker == "stage3_segment" and not args.baseline:
-                seg_dir = args.output_root / "segments"
-                # Check a few random folders for y.wav
-                has_audio = seg_dir.exists() and any(seg_dir.glob("*/Track*/y.wav"))
-                if not has_audio:
-                    logger.warning(f"Self-Healing: {marker} is DONE but segments are missing audio (y.wav). Resetting...")
-                    (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+            elif marker == "stage3_segment":
+                seg_manifest = args.output_root / "segments" / args.dataset / "manifest.csv"
+                if not seg_manifest.exists():
+                    logger.warning(f"Self-Healing: {marker} is DONE but manifest is missing at {seg_manifest}.")
+                    should_reset = True
+                elif not args.baseline:
+                    seg_dir = args.output_root / "segments" / args.dataset
+                    has_audio = any(seg_dir.glob("*/Track*/y.wav"))
+                    if not has_audio:
+                        logger.warning(f"Self-Healing: {marker} is DONE but audio (y.wav) is missing.")
+                        should_reset = True
+            
+            elif marker == "stage3_situation":
+                # Check for some situation files
+                sit_dir = args.output_root / "segments" / args.dataset
+                has_sit = any(sit_dir.glob("*/Track*/situation.npy"))
+                if not has_sit:
+                    logger.warning(f"Self-Healing: {marker} is DONE but no situation.npy files found.")
+                    should_reset = True
+
+            elif marker == "stage3_intent_targets":
+                intent_manifest = args.output_root / "segments" / args.dataset / "manifest_intent.csv"
+                if not intent_manifest.exists():
+                    logger.warning(f"Self-Healing: {marker} is DONE but intent manifest is missing.")
+                    should_reset = True
+
+            if should_reset:
+                logger.info(f"Self-Healing: Invalidating {marker}...")
+                (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
                 
         run_pipeline_step(args, python_bin, config_path, marker, cmd)
         
@@ -600,14 +625,22 @@ def tokenize(args, python_bin: Path, config_path: Path):
         run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v1", cmd)
     else:
         banner("STAGE 4: EnCodec Tokenization (V2)")
-        limit_suffix = f" --limit {args.limit}" if args.limit else ""
-        cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
-        run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v2", cmd)
-        
-        # Cleanup for Pro mode after tokenization
-        if not args.dry_run:
-            logger.info("STAGE 4 Tokenization complete. Triggering post-token cleanup...")
-            run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
+    limit_suffix = f" --limit {args.limit}" if args.limit else ""
+    cmd = f"solomuse_data.cli renderer-token-targets --config {config_path} --dataset {args.dataset}{limit_suffix}"
+    
+    # SELF-HEALING for Stage 4
+    if not args.baseline and is_done(args.output_root, "stage4_tokenize_v2"):
+        token_manifest = args.output_root / "segments" / args.dataset / "manifest_renderer_splits.csv"
+        if not token_manifest.exists():
+            logger.warning("Self-Healing: stage4_tokenize_v2 is DONE but renderer manifest is missing. Resetting...")
+            (args.output_root / ".done" / "stage4_tokenize_v2.done").unlink(missing_ok=True)
+
+    run_pipeline_step(args, python_bin, config_path, "stage4_tokenize_v2", cmd)
+    
+    # Cleanup for Pro mode after tokenization
+    if not args.dry_run:
+        logger.info("STAGE 4 Tokenization complete. Triggering post-token cleanup...")
+        run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
 
 def train(args, python_bin: Path, config_path: Path):
     """STAGE 5 - Training"""
