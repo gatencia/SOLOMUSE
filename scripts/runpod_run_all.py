@@ -473,6 +473,14 @@ def discover_and_symlink_artifacts(args):
                     is_empty = False # Assume non-empty if we can't look
                 
                 if not is_empty:
+                    # PRO MODE PROTECTION: If reusing segments, ensure they have audio (y.wav)
+                    if folder_name == "segments" and not args.baseline:
+                        # Check a few random samples for y.wav
+                        has_audio = any(source_path.glob("*/Track*/y.wav"))
+                        if not has_audio:
+                            logger.info(f"Discovery: Found '{folder_name}' in {sr.name} BUT it is missing audio (y.wav). Skipping reuse.")
+                            continue
+
                     if not dest_path.exists():
                         logger.info(f"PRO-TIP: Reusing existing '{folder_name}' from older run: {sr.name}")
                         args.output_root.mkdir(parents=True, exist_ok=True)
@@ -542,6 +550,15 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     ]
     
     for marker, cmd in steps:
+        # SELF-HEALING: If segments are marked done but missing audio (needed for Pro), reset
+        if marker == "stage3_segment" and not args.baseline and is_done(args.output_root, marker):
+            seg_dir = args.output_root / "segments"
+            # Check a few random folders for y.wav
+            has_audio = seg_dir.exists() and any(seg_dir.glob("*/Track*/y.wav"))
+            if not has_audio:
+                logger.warning(f"Self-Healing: {marker} is DONE but segments are missing audio (y.wav). Resetting...")
+                (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+                
         run_pipeline_step(args, python_bin, config_path, marker, cmd, global_root=args.persistent_root)
         
     # If baseline, we can clean up now because Stage 4 v1 creates its own targets.
