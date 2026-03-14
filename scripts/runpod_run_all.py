@@ -349,6 +349,27 @@ inference_top_p: 0.95
         logger.info(f"Wrote config to {config_path}")
         mark_done(args.output_root, "stage1_config")
 
+def _count_slakh_tracks(root: Path) -> int:
+    """Count usable Slakh tracks by discovering Track* dirs with stems or mix files."""
+    if not root.exists():
+        return 0
+
+    track_dirs = set()
+
+    # Primary pattern: Track*/stems
+    for stems_dir in root.rglob("Track*/stems"):
+        if stems_dir.is_dir():
+            track_dirs.add(str(stems_dir.parent.resolve()))
+
+    # Fallback: Track* with canonical mix filenames
+    mix_names = ["mix.wav", "mix.flac", "mix.mp3", "mixture.wav", "mixture.flac", "mixture.mp3"]
+    for name in mix_names:
+        for mix_path in root.rglob(f"Track*/{name}"):
+            if mix_path.is_file():
+                track_dirs.add(str(mix_path.parent.resolve()))
+
+    return len(track_dirs)
+
 def acquire_dataset(args):
     """STAGE 2 - Acquire Slakh2100"""
     banner(f"STAGE 2: Acquire Dataset ({args.dataset})")
@@ -369,12 +390,15 @@ def acquire_dataset(args):
     found_root = None
     for pr in possible_roots:
         if pr.exists():
-            # Check for tracks at root or in common sub-directories (Slakh structure)
-            has_tracks = any(pr.glob("Track*")) or any(pr.glob("*/Track*"))
-            has_splits = (pr / "train").exists() or (pr / "validation").exists()
-            if has_tracks or has_splits:
+            track_count = _count_slakh_tracks(pr)
+            if track_count > 0:
                 found_root = pr
                 break
+            has_splits = (pr / "train").exists() or (pr / "validation").exists() or (pr / "test").exists()
+            if has_splits:
+                logger.warning(
+                    f"Discovery: Found split-like structure at {pr} but 0 usable Track* folders. Ignoring this root."
+                )
     
     if found_root:
         logger.info(f"Discovery: Found dataset at {found_root}")
@@ -396,10 +420,10 @@ def acquire_dataset(args):
         else:
             logger.info(f"No existing dataset found in standard locations. Proceeding with acquisition in {args.slakh_root}")
             args.slakh_root.mkdir(parents=True, exist_ok=True)
-            
-            has_tracks = any(args.slakh_root.glob("Track*")) or any(args.slakh_root.glob("*/Track*"))
-            if has_tracks:
-                logger.info(f"Found existing tracks in {args.slakh_root}, skipping download.")
+
+            existing_track_count = _count_slakh_tracks(args.slakh_root)
+            if existing_track_count > 0:
+                logger.info(f"Found existing tracks in {args.slakh_root}, skipping download. Tracks: {existing_track_count}")
             else:
                 # Check Disk Space (Slakh2100 is ~100GB extracted)
                 free_gb = get_disk_free(args.slakh_root)
@@ -419,6 +443,13 @@ def acquire_dataset(args):
                     ok = extract_archive_robust(archive_path, args.slakh_root, dry_run=args.dry_run)
                     if not ok:
                         logger.error(f"Failed to extract local archive: {archive_path}")
+                        sys.exit(1)
+                    extracted_tracks = _count_slakh_tracks(args.slakh_root)
+                    if extracted_tracks == 0:
+                        logger.error(
+                            f"Extraction finished but found 0 usable Slakh tracks in {args.slakh_root}. "
+                            "Archive may be corrupted or not the expected dataset."
+                        )
                         sys.exit(1)
                 elif args.slakh_url:
                     archive_name = "slakh_dataset.tar.gz" if ".tar.gz" in args.slakh_url else "slakh_dataset.zip"
@@ -444,6 +475,13 @@ def acquire_dataset(args):
                         if not ok:
                             logger.error(f"Failed to extract downloaded archive: {archive_path}")
                             sys.exit(1)
+                        extracted_tracks = _count_slakh_tracks(args.slakh_root)
+                        if extracted_tracks == 0:
+                            logger.error(
+                                f"Extraction finished but found 0 usable Slakh tracks in {args.slakh_root}. "
+                                "Downloaded payload may not be Slakh or may be corrupted."
+                            )
+                            sys.exit(1)
                     except Exception as e:
                         logger.error(f"Extraction failed. Your disk might be full. Note: The 100GB dataset needs ~200GB of total free space during extraction (100GB archive + 100GB extracted files).")
                         logger.info("If you want to free up space and try again, you can manually delete the archive and run with the Tiny BabySlakh dataset.")
@@ -468,7 +506,7 @@ def acquire_dataset(args):
                     logger.error("=" * 60)
                     sys.exit(1)
                     
-            num_tracks = len(list(args.slakh_root.glob("Track*"))) or len(list(args.slakh_root.glob("*/Track*")))
+            num_tracks = _count_slakh_tracks(args.slakh_root)
             logger.info(f"Acquisition complete. Tracks: {num_tracks}")
             mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
     else:
