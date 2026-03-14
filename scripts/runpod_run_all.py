@@ -445,11 +445,14 @@ def discover_and_symlink_artifacts(args):
         "stage3_segment": "segments"
     }
     
-    # Standard locations to search (previous default runs)
-    search_roots = [
-        args.persistent_root / "SOLOMUSE_RUNS" / "solomuse_v2_run",
-        args.persistent_root / "SOLOMUSE_RUNS" / "solomuse_baseline",
-    ]
+    # Standard locations to search (current persistent runs)
+    runs_dir = args.persistent_root / "SOLOMUSE_RUNS"
+    search_roots = []
+    if runs_dir.exists():
+        search_roots = [d for d in runs_dir.iterdir() if d.is_dir() and d != args.output_root]
+    
+    # Sort search_roots by mtime (most recent first) to find the latest valid artifacts
+    search_roots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     
     for marker, folder_name in stages_to_folders.items():
         if is_done(args.output_root, marker):
@@ -470,8 +473,9 @@ def discover_and_symlink_artifacts(args):
                     try:
                         os.symlink(source_path, dest_path)
                         mark_done(args.output_root, marker)
-                        # Special: If we recovered segments, ALL preceding Stage 3 steps are effectively done
+                        # Special: If we recovered segments, ALL preceding Stage 2 and 3 steps are effectively done
                         if folder_name == "segments":
+                            mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
                             mark_done(args.output_root, "stage3_build_pairs")
                             mark_done(args.output_root, "stage3_situation")
                             mark_done(args.output_root, "stage3_intent_targets")
