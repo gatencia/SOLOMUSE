@@ -445,48 +445,58 @@ def discover_and_symlink_artifacts(args):
         "stage3_segment": "segments"
     }
     
-    # Standard locations to search (current persistent runs)
     runs_dir = args.persistent_root / "SOLOMUSE_RUNS"
-    search_roots = []
-    if runs_dir.exists():
-        search_roots = [d for d in runs_dir.iterdir() if d.is_dir() and d != args.output_root]
-    
-    # Sort search_roots by mtime (most recent first) to find the latest valid artifacts
+    if not runs_dir.exists():
+        logger.debug(f"Discovery: No runs found in {runs_dir}")
+        return
+
+    # Scan all directories in SOLOMUSE_RUNS
+    search_roots = [d for d in runs_dir.iterdir() if d.is_dir() and d != args.output_root]
+    # Sort by mtime (most recent first)
     search_roots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    logger.info(f"Discovery: Checking {len(search_roots)} previous runs for reusable artifacts...")
     
     for marker, folder_name in stages_to_folders.items():
         if is_done(args.output_root, marker):
             continue
             
         for sr in search_roots:
-            if sr == args.output_root: continue
-            if not sr.exists(): continue
-            
-            # More robust check: folder must exist and be non-empty
             source_path = sr / folder_name
             dest_path = args.output_root / folder_name
             
-            if source_path.exists() and any(source_path.iterdir()):
-                if not dest_path.exists():
-                    logger.info(f"PRO-TIP: Found existing {folder_name} at {source_path}. Symlinking to skip processing.")
-                    args.output_root.mkdir(parents=True, exist_ok=True)
-                    try:
-                        os.symlink(source_path, dest_path)
+            # Check if source exists and is not empty
+            if source_path.exists():
+                try:
+                    is_empty = not any(source_path.iterdir())
+                except PermissionError:
+                    is_empty = False # Assume non-empty if we can't look
+                
+                if not is_empty:
+                    if not dest_path.exists():
+                        logger.info(f"PRO-TIP: Reusing existing '{folder_name}' from older run: {sr.name}")
+                        args.output_root.mkdir(parents=True, exist_ok=True)
+                        try:
+                            os.symlink(source_path, dest_path)
+                            mark_done(args.output_root, marker)
+                            
+                            # CASCADING SUCCESS: If we have segments, everything before it is DONE.
+                            if folder_name == "segments":
+                                logger.info("Found segments! Marking acquisition and pair-building as skipped.")
+                                mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
+                                mark_done(args.output_root, "stage3_build_pairs")
+                                mark_done(args.output_root, "stage3_situation")
+                                mark_done(args.output_root, "stage3_intent_targets")
+                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to symlink {source_path}: {e}")
+                    else:
+                        # Already matches/exists, just mark marker if missing
                         mark_done(args.output_root, marker)
-                        # Special: If we recovered segments, ALL preceding Stage 2 and 3 steps are effectively done
                         if folder_name == "segments":
-                            mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
-                            mark_done(args.output_root, "stage3_build_pairs")
-                            mark_done(args.output_root, "stage3_situation")
-                            mark_done(args.output_root, "stage3_intent_targets")
+                             mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
+                             mark_done(args.output_root, "stage3_build_pairs")
                         break
-                    except Exception as e:
-                        logger.warning(f"Failed to symlink {source_path}: {e}")
-                else:
-                    # Already exists or symlinked, just mark as done if not already
-                    if not is_done(args.output_root, marker):
-                        mark_done(args.output_root, marker)
-                    break
 
 def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str, global_root: Path = None):
     """Helper to run a pipeline command using the venv python"""
