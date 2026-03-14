@@ -317,6 +317,28 @@ def acquire_dataset(args):
         return
         
     if not is_done(args.output_root, "stage2_acquire") and not args.dry_run:
+        # Discovery: Check multiple locations for existing data
+        possible_roots = [
+            args.slakh_root,
+            args.persistent_root / "slakh2100",
+            Path("/workspace/datasets/slakh2100"),
+            Path("/runpod-volume/datasets/slakh2100"),
+            Path("/workspace/slakh2100")
+        ]
+        
+        found_root = None
+        for pr in possible_roots:
+            if pr.exists() and any(pr.glob("Track*")):
+                found_root = pr
+                break
+        
+        if found_root:
+            logger.info(f"PRO-TIP: Found existing dataset at {found_root}. Using it to skip download.")
+            args.slakh_root = found_root
+            mark_done(args.output_root, "stage2_acquire")
+            return
+
+        logger.info(f"No existing dataset found in standard locations. Proceeding with acquisition in {args.slakh_root}")
         args.slakh_root.mkdir(parents=True, exist_ok=True)
         
         has_tracks = any(args.slakh_root.glob("Track*"))
@@ -600,6 +622,7 @@ def main():
                         default="https://zenodo.org/records/4599666/files/slakh2100_flac_redux.tar.gz?download=1",
                         help="Direct download URL for Slakh archive (Default: Zenodo full release)")
     parser.add_argument("--slakh-archive", type=str, help="Local path to uploaded slakh zip or tar.gz")
+    parser.add_argument("--slakh-root", type=str, help="Explicit path to extracted Slakh dataset")
     
     # Hyper-parameters
     parser.add_argument("--limit", type=int, help="Limit number of segments for fast pass")
@@ -649,7 +672,12 @@ def main():
     args.persistent_root = Path(args.persistent_root)
     args.workspace_root = Path(args.workspace_root)
     args.output_root = args.persistent_root / "SOLOMUSE_RUNS" / args.run_name
-    args.slakh_root = args.persistent_root / "datasets" / "slakh2100"
+    
+    # Slakh Root Priority: CLI > Default Persistence
+    if getattr(args, "slakh_root", None):
+        args.slakh_root = Path(args.slakh_root)
+    else:
+        args.slakh_root = args.persistent_root / "datasets" / "slakh2100"
     
     # 2. Update Logger with File Handler
     log_file = args.output_root / "runpod_run.log"
