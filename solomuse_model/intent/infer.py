@@ -81,7 +81,7 @@ class IntentInferencer:
         # Broadcast situation: [32] -> [1, F, 32]
         sit_mat = np.tile(situation_vector, (num_frames, 1))
         # Add batch dim
-        x_tensor = torch.from_numpy(sit_mat).unsqueeze(0).to(self.device)
+        x_tensor = torch.from_numpy(sit_mat).unsqueeze(0).float().to(self.device)
         
         with torch.no_grad():
             preds = self.model(x_tensor)

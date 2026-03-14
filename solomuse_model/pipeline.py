@@ -65,13 +65,16 @@ class SoloMusePipeline:
         start_time = time.perf_counter()
         num_frames = int(duration_s * self.cfg.intent_hz)
         
-        if self.cfg.intent_checkpoint_path:
-            logger.info(f"Planning intent using {self.cfg.intent_model_type} model from {self.cfg.intent_checkpoint_path}")
+        from solomuse_model.paths import get_intent_checkpoint_path
+        ckpt_path = get_intent_checkpoint_path(self.cfg)
+        
+        if ckpt_path.exists():
+            logger.info(f"Planning intent using {self.cfg.intent_model_type} model from {ckpt_path}")
             from solomuse_model.intent.infer import IntentInferencer
-            inferencer = IntentInferencer(self.cfg, self.cfg.intent_checkpoint_path)
+            inferencer = IntentInferencer(self.cfg, str(ckpt_path))
             intent = inferencer.predict_sequence(situation_summary, num_frames)
         else:
-            logger.info("No intent model checkpoint found. Returning zero intent array.")
+            logger.info(f"No intent model checkpoint found at {ckpt_path}. Returning zero intent array.")
             intent = np.zeros((num_frames, 7), dtype=np.float32)
             
         latency = (time.perf_counter() - start_time) * 1000
@@ -126,7 +129,9 @@ class SoloMusePipeline:
             
         else: # conv1d / v1
             from solomuse_model.renderer.infer import render_segment
-            y_hat = render_segment(x_audio, intent_plan, situation_summary, self.cfg, self.cfg.renderer_checkpoint_path)
+            from solomuse_model.paths import get_renderer_checkpoint_path
+            ckpt_path = get_renderer_checkpoint_path(self.cfg)
+            y_hat = render_segment(x_audio, intent_plan, situation_summary, self.cfg, str(ckpt_path) if ckpt_path.exists() else None)
             outputs["y_hat"] = y_hat
             
         latency = (time.perf_counter() - start_time) * 1000
