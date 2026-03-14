@@ -238,6 +238,13 @@ def write_pipeline_config(args, config_path: Path):
     banner("STAGE 1: Generating Solomuse Config")
     
     if not is_done(args.output_root, "stage1_config") and not args.dry_run:
+        # --- Architecture Scaling ---
+        pro_mode = getattr(args, "pro", False)
+        intent_d_model = 512 if pro_mode else 256
+        intent_layers = 12 if pro_mode else 6
+        renderer_d_model = 1024 if pro_mode else 768
+        renderer_layers = 16 if pro_mode else 12
+
         config_yaml = f"""# Auto-generated RunPod Config
 output_root: {args.output_root}
 dataset_roots:
@@ -258,10 +265,10 @@ renderer_representation: {"wavechunk" if args.baseline else "encodec"}
 num_workers: {args.num_workers}
 
 # --- Intent V2 Hyperparameters ---
-intent_d_model: 256
-intent_num_layers: 6
+intent_d_model: {intent_d_model}
+intent_num_layers: {intent_layers}
 intent_num_heads: 8
-intent_ffn_dim: 1024
+intent_ffn_dim: {intent_d_model * 4}
 intent_lr: 3e-4
 intent_weight_decay: 1e-2
 intent_batch_size: {args.intent_batch_size}
@@ -270,10 +277,10 @@ intent_warmup_steps: 2000
 intent_lr_schedule: cosine
 
 # --- Renderer V2 Hyperparameters ---
-renderer_d_model: 768
-renderer_num_layers: 12
-renderer_num_heads: 12
-renderer_ffn_dim: 3072
+renderer_d_model: {renderer_d_model}
+renderer_num_layers: {renderer_layers}
+renderer_num_heads: {16 if pro_mode else 12}
+renderer_ffn_dim: {renderer_d_model * 4}
 renderer_lr: 2e-4
 renderer_weight_decay: 1e-2
 renderer_batch_size: {args.renderer_batch_size}
@@ -379,6 +386,11 @@ def acquire_dataset(args):
         mark_done(args.output_root, "stage2_acquire")
     else:
         logger.info("Stage 2 already completed.")
+    
+    # Optional: Run cleanup immediately after acquisition if disk is tight
+    if not args.dry_run and get_disk_free(args.slakh_root) < 200:
+        logger.info("Disk space tight after acquisition. Triggering preliminary cleanup...")
+        run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
 
 def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str):
     """Helper to run a pipeline command using the venv python"""
@@ -422,6 +434,11 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
     
     for marker, cmd in steps:
         run_pipeline_step(args, python_bin, config_path, marker, cmd)
+        
+    # Crucial Cleanup after segmentation (Stage 3b) to free up space for Stage 4 targets
+    if not args.dry_run:
+        logger.info("STAGE 3 Artifacts complete. Triggering aggressive cleanup to free up quota for Stage 4 targets...")
+        run_cmd(f"{python_bin} scripts/cleanup_redundancy.py --output-root {args.output_root} --slakh-root {args.slakh_root}")
 
 def tokenize(args, python_bin: Path, config_path: Path):
     """STAGE 4 - Renderer Target Collection"""
@@ -595,8 +612,17 @@ def main():
     parser.add_argument("--smoke-test", action="store_true", help="Ultra-fast pass (limit 10, epochs 1)")
     parser.add_argument("--baseline", action="store_true", help="Use Renderer V1 (Conv1D) for faster audible results")
     parser.add_argument("--tiny", action="store_true", help="Use BabySlakh dataset (~1GB) for limited disk space pods")
+    parser.add_argument("--pro", action="store_true", help="High-intensity A100 training with larger/deeper models")
     
     args = parser.parse_args()
+    
+    if args.pro:
+        # Scale for A100 80GB
+        args.intent_batch_size = max(args.intent_batch_size, 128)
+        args.renderer_batch_size = max(args.renderer_batch_size, 32)
+        args.intent_epochs = max(args.intent_epochs, 200)
+        args.renderer_epochs = max(args.renderer_epochs, 300)
+        logger.info("PRO MODE enabled. Scaling for High-Intensity A100 Training.")
     
     if args.tiny:
         args.slakh_url = "https://zenodo.org/records/4603844/files/babyslakh_16k.zip?download=1"

@@ -22,6 +22,7 @@ dependencies = [
     "librosa",
     "torch",
     "torchaudio",
+    "encodec",
     "wandb",
     "matplotlib"
 ]

@@ -42,9 +42,9 @@ def render_segment(x_audio: np.ndarray, intent_seq: np.ndarray, situation_vec: n
     # Align frame count min
     f_len = min(x_encoded.shape[0], intent_seq.shape[0])
     
-    bx = torch.tensor(x_encoded[:f_len]).unsqueeze(0).to(device) # [1, F, c_x]
-    bi = torch.tensor(intent_seq[:f_len]).unsqueeze(0).to(device) # [1, F, 7]
-    bs = torch.tensor(situation_vec).unsqueeze(0).repeat(f_len, 1).unsqueeze(0).to(device) # [1, F, 32]
+    bx = torch.tensor(x_encoded[:f_len]).unsqueeze(0).float().to(device) # [1, F, c_x]
+    bi = torch.tensor(intent_seq[:f_len]).unsqueeze(0).float().to(device) # [1, F, 7]
+    bs = torch.tensor(situation_vec).unsqueeze(0).repeat(f_len, 1).unsqueeze(0).float().to(device) # [1, F, 32]
     
     # 3. Model
     model = RendererConv1D_V1(c_x, d_int, d_sit, c_y, hidden_dim=cfg.renderer_hidden_dim, num_blocks=3).to(device)
