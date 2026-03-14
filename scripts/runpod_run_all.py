@@ -499,14 +499,30 @@ def discover_and_symlink_artifacts(args):
                         except Exception as e:
                             logger.warning(f"Failed to symlink {source_path}: {e}")
                     else:
-                        # Already matches/exists, just mark marker if missing
-                        mark_done(args.output_root, marker)
-                        if folder_name == "segments":
-                             mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
-                             mark_done(args.output_root, "stage3_build_pairs")
-                             mark_done(args.output_root, "stage3_situation")
-                             mark_done(args.output_root, "stage3_intent_targets")
-                        break
+                        # DEST EXISTS: Validate it. 
+                        # In Pro mode, we MUST have y.wav.
+                        has_audio = True
+                        if folder_name == "segments" and not args.baseline:
+                            has_audio = any(dest_path.glob("*/Track*/y.wav"))
+                        
+                        if has_audio:
+                            # Already matches/exists and valid, just mark marker if missing
+                            mark_done(args.output_root, marker)
+                            if folder_name == "segments":
+                                 mark_done(args.output_root, "stage2_acquire", global_root=args.persistent_root)
+                                 mark_done(args.output_root, "stage3_build_pairs")
+                                 mark_done(args.output_root, "stage3_situation")
+                                 mark_done(args.output_root, "stage3_intent_targets")
+                            break
+                        else:
+                            logger.info(f"Recovery: Existing '{folder_name}' is missing audio. Purging to allow rebuild.")
+                            try:
+                                if dest_path.is_symlink(): dest_path.unlink()
+                                else: shutil.rmtree(dest_path)
+                                # Markers will be cleared by self-healing later, but let's be proactive
+                                (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
+                            except: pass
+                            # Don't break! Maybe another run has the full data.
 
 def run_pipeline_step(args, python_bin: Path, config_path: Path, step_name: str, cmd: str, global_root: Path = None):
     """Helper to run a pipeline command using the venv python"""
@@ -567,7 +583,7 @@ def build_artifacts(args, python_bin: Path, config_path: Path):
                     logger.warning(f"Self-Healing: {marker} is DONE but segments are missing audio (y.wav). Resetting...")
                     (args.output_root / ".done" / f"{marker}.done").unlink(missing_ok=True)
                 
-        run_pipeline_step(args, python_bin, config_path, marker, cmd, global_root=args.persistent_root)
+        run_pipeline_step(args, python_bin, config_path, marker, cmd)
         
     # If baseline, we can clean up now because Stage 4 v1 creates its own targets.
     # If Pro mode, we MUST wait until AFTER tokenize (Stage 4 v2) is done.
