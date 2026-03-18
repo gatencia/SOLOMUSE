@@ -135,8 +135,9 @@ def robust_download(url: str, dest_path: Path, dry_run: bool = False):
             f"wget -c -U '{UA}' -O '{dest_path}' '{url}'"
         )
     if shutil.which("curl"):
+        # -f: fail on HTTP 4xx/5xx (exit 22) instead of silently saving an error page
         downloaders.append(
-            f"curl -L -C - -A '{UA}' -o '{dest_path}' '{url}'"
+            f"curl -L -C - -f -A '{UA}' -o '{dest_path}' '{url}'"
         )
 
     if not downloaders:
@@ -155,13 +156,16 @@ def robust_download(url: str, dest_path: Path, dry_run: bool = False):
     rc = last_rc
     free_gb = get_disk_free(dest_path.parent)
 
-    if rc == 22:
+    if rc in (22, 8):  # 22 = aria2c/curl HTTP error, 8 = wget HTTP error
         raise RuntimeError(
-            f"HTTP error from server (exit code 22) on all download tools. "
-            f"Zenodo returned 403 Forbidden even with a browser User-Agent. "
-            f"This usually means the record is access-restricted or your IP is blocked. "
-            f"Disk space is fine ({free_gb:.1f} GB free). "
-            f"Try: --tiny (BabySlakh) or upload the archive manually with --slakh-archive."
+            f"HTTP 403 Forbidden from Zenodo on all download tools "
+            f"(disk is fine: {free_gb:.1f} GB free). "
+            f"Zenodo/CERN is blocking downloads from this pod IP. "
+            f"Workarounds: "
+            f"(A) use --tiny for BabySlakh (~1 GB, usually not blocked); "
+            f"(B) download the archive on your local machine and upload it with "
+            f"--slakh-archive /path/to/slakh2100_flac_redux.tar.gz; "
+            f"(C) try again later — CERN rate-limits by IP and blocks lift after ~1 hour."
         )
     elif free_gb < 1.0:
         raise RuntimeError(
