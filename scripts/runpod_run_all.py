@@ -116,27 +116,52 @@ def robust_download(url: str, dest_path: Path, dry_run: bool = False):
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use moderate connections (4) to avoid Zenodo 403 rate-limiting.
+    # Zenodo (and many mirrors) return 403 when they see a download-manager User-Agent.
+    # Spoofing a browser UA fixes this reliably.
+    UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     # aria2c exit code 22 = HTTP response not successful (e.g. 403/404).
     # aria2c exit code 32 = resource not found on server.
+    # Try downloaders in order of preference; stop on first success.
+    downloaders = []
     if shutil.which("aria2c"):
-        cmd = f"aria2c -x 4 -s 4 -c --dir='{dest_path.parent}' --out='{dest_path.name}' '{url}'"
-    else:
-        cmd = f"wget -c -O '{dest_path}' '{url}'"
+        downloaders.append(
+            f"aria2c -x 4 -s 4 -c"
+            f" --header='User-Agent: {UA}'"
+            f" --dir='{dest_path.parent}' --out='{dest_path.name}' '{url}'"
+        )
+    if shutil.which("wget"):
+        downloaders.append(
+            f"wget -c -U '{UA}' -O '{dest_path}' '{url}'"
+        )
+    if shutil.which("curl"):
+        downloaders.append(
+            f"curl -L -C - -A '{UA}' -o '{dest_path}' '{url}'"
+        )
 
-    result = run_cmd(cmd, fatal=False)
-    if result is None or result.returncode == 0:
-        return  # success or dry-run
+    if not downloaders:
+        raise RuntimeError("No download tool found (aria2c, wget, or curl). Install one and retry.")
 
-    rc = result.returncode
+    last_rc = None
+    for cmd in downloaders:
+        result = run_cmd(cmd, fatal=False)
+        if result is None:
+            return  # dry-run
+        if result.returncode == 0:
+            return  # success
+        last_rc = result.returncode
+        logger.warning(f"Downloader failed with exit code {last_rc}, trying next fallback...")
+
+    rc = last_rc
     free_gb = get_disk_free(dest_path.parent)
 
     if rc == 22:
         raise RuntimeError(
-            f"HTTP error from server (exit code 22). "
-            f"The server returned a non-2xx response — most likely a 403 Forbidden "
-            f"(Zenodo rate-limit or access restriction). "
-            f"Disk space is fine ({free_gb:.1f} GB free)."
+            f"HTTP error from server (exit code 22) on all download tools. "
+            f"Zenodo returned 403 Forbidden even with a browser User-Agent. "
+            f"This usually means the record is access-restricted or your IP is blocked. "
+            f"Disk space is fine ({free_gb:.1f} GB free). "
+            f"Try: --tiny (BabySlakh) or upload the archive manually with --slakh-archive."
         )
     elif free_gb < 1.0:
         raise RuntimeError(
@@ -145,9 +170,9 @@ def robust_download(url: str, dest_path: Path, dry_run: bool = False):
         )
     else:
         raise RuntimeError(
-            f"Download failed with exit code {rc}. "
+            f"All download tools failed with exit code {rc}. "
             f"Disk space looks fine ({free_gb:.1f} GB free). "
-            f"Check the aria2c/wget output above for details."
+            f"Check the output above for details."
         )
 
 def extract_archive_robust(archive_path: Path, dest_dir: Path, dry_run: bool = False) -> bool:
