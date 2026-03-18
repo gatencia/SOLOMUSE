@@ -108,18 +108,47 @@ def retry_wrapper(func, retries=3, backoff=2):
     return wrapper
 
 def robust_download(url: str, dest_path: Path, dry_run: bool = False):
-    """Resumable download using aria2c if available, else wget -c"""
+    """Resumable download using aria2c if available, else wget -c.
+
+    Raises RuntimeError with a human-readable cause on failure.
+    """
     if dry_run: return
-    
+
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Try aria2c first (much faster, better resuming)
+
+    # Use moderate connections (4) to avoid Zenodo 403 rate-limiting.
+    # aria2c exit code 22 = HTTP response not successful (e.g. 403/404).
+    # aria2c exit code 32 = resource not found on server.
     if shutil.which("aria2c"):
-        cmd = f"aria2c -x 16 -s 16 -c --dir='{dest_path.parent}' --out='{dest_path.name}' '{url}'"
+        cmd = f"aria2c -x 4 -s 4 -c --dir='{dest_path.parent}' --out='{dest_path.name}' '{url}'"
     else:
         cmd = f"wget -c -O '{dest_path}' '{url}'"
-    
-    run_cmd(cmd)
+
+    result = run_cmd(cmd, fatal=False)
+    if result is None or result.returncode == 0:
+        return  # success or dry-run
+
+    rc = result.returncode
+    free_gb = get_disk_free(dest_path.parent)
+
+    if rc == 22:
+        raise RuntimeError(
+            f"HTTP error from server (exit code 22). "
+            f"The server returned a non-2xx response — most likely a 403 Forbidden "
+            f"(Zenodo rate-limit or access restriction). "
+            f"Disk space is fine ({free_gb:.1f} GB free)."
+        )
+    elif free_gb < 1.0:
+        raise RuntimeError(
+            f"Download failed (exit code {rc}) and disk space is critically low "
+            f"({free_gb:.1f} GB free). Your pod volume may be too small."
+        )
+    else:
+        raise RuntimeError(
+            f"Download failed with exit code {rc}. "
+            f"Disk space looks fine ({free_gb:.1f} GB free). "
+            f"Check the aria2c/wget output above for details."
+        )
 
 def extract_archive_robust(archive_path: Path, dest_dir: Path, dry_run: bool = False) -> bool:
     """Extract zip/tar/tar.gz archives with fallbacks for mis-labeled files."""
@@ -459,13 +488,17 @@ def acquire_dataset(args):
                     
                     try:
                         robust_download(args.slakh_url, archive_path)
-                    except SystemExit:
+                    except RuntimeError as exc:
                         logger.error("=" * 60)
-                        logger.error(" DOWNLOAD FAILED: Disk Quota Exceeded")
+                        logger.error(" DOWNLOAD FAILED")
                         logger.error("-" * 60)
-                        logger.error(" Your Pod's disk volume is likely too small for the 100GB Slakh dataset.")
-                        logger.error(" To fix this, run with the 'Tiny' BabySlakh dataset instead:")
-                        logger.error(" python runpod_run_all.py --baseline --tiny")
+                        logger.error(f" {exc}")
+                        logger.error("-" * 60)
+                        logger.error(" FIX OPTIONS:")
+                        logger.error("   1. Use the small BabySlakh dataset (~1 GB):")
+                        logger.error("      python scripts/runpod_run_all.py --baseline --tiny")
+                        logger.error("   2. If the error is a 403, wait a few minutes and retry.")
+                        logger.error("   3. If disk is too small, increase pod volume size.")
                         logger.error("=" * 60)
                         sys.exit(1)
                     
